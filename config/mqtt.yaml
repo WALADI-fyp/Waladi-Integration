@@ -1,0 +1,9 @@
+broker:
+  host: "localhost"
+  port: 1883
+  username: null
+  password: null
+
+client:
+  keepalive: 30
+  device_id: "waladi_pi"
