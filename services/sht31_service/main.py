@@ -3,10 +3,10 @@ import yaml
 
 from shared.mqtt_client import MqttClient
 from shared.message import make_message
+from services.sht31_service.sht31_driver import SHT31
 
 
 def load_yaml(path: str) -> dict:
-    """Load a YAML file into a Python dict."""
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
@@ -21,8 +21,8 @@ def main():
     keepalive = mqtt_cfg["client"]["keepalive"]
     device_id = mqtt_cfg["client"]["device_id"]
 
-    username = mqtt_cfg["broker"]["username"]
-    password = mqtt_cfg["broker"]["password"]
+    username = mqtt_cfg["broker"].get("username")
+    password = mqtt_cfg["broker"].get("password")
 
     topic = topics_cfg["sht31_env"]
 
@@ -37,26 +37,27 @@ def main():
     )
     client.connect()
 
-    # 3) Dummy readings (we will replace this later with real SHT31 reads)
-    temp_c = 24.0
-    humidity_rh = 50.0
+    # 3) Init real sensor (change address if your i2cdetect shows 0x45)
+    sensor = SHT31(bus_id=1, address=0x44)
 
     try:
         while True:
-            # Change values slightly so you can see updates
-            temp_c += 0.05
-            humidity_rh += 0.10
+            try:
+                temp_c, humidity_rh = sensor.read()
+            except Exception as e:
+                print(f"[sht31_service] read failed: {e}")
+                time.sleep(1.0)
+                continue
 
             msg = make_message(
                 device_id=device_id,
                 source="sht31_service",
                 data={
-                    "temp_c": round(temp_c, 2),
-                    "humidity_rh": round(humidity_rh, 2),
+                    "temp_c": round(float(temp_c), 2),
+                    "humidity_rh": round(float(humidity_rh), 2),
                 },
             )
 
-            # Publish to MQTT
             client.publish_json(topic, msg, qos=1, retain=False)
             print(f"published -> {topic}: {msg}")
 
