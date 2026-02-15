@@ -37,7 +37,7 @@ def main():
     )
     client.connect()
 
-    # 3) Init real sensor (change address if your i2cdetect shows 0x45)
+    # 3) Initsensor 
     sensor = SHT31(bus_id=1, address=0x44)
 
     try:

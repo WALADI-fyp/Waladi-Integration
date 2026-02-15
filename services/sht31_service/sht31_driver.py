@@ -3,11 +3,7 @@ from smbus2 import SMBus
 
 
 class SHT31:
-    """
-    Minimal SHT31 (SHT3x) reader using I2C.
-    Returns temperature in C and relative humidity in %RH.
-    """
-
+  
     CMD_MEASURE = (0x2C, 0x06)  # single shot, high repeatability, clock stretching
 
     def __init__(self, bus_id: int = 1, address: int = 0x44):
@@ -26,10 +22,7 @@ class SHT31:
         return crc
 
     def read(self):
-        """
-        Returns: (temp_c: float, humidity_rh: float)
-        Raises: OSError on I2C errors, ValueError on CRC failure
-        """
+        
         with SMBus(self.bus_id) as bus:
             bus.write_i2c_block_data(self.address, self.CMD_MEASURE[0], [self.CMD_MEASURE[1]])
             time.sleep(0.05)  # safe delay

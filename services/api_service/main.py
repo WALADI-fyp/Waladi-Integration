@@ -18,7 +18,7 @@ def load_yaml(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-@app.get("/health")
+@app.get("/status")
 def health():
     return {"status": "ok"}
 
@@ -55,7 +55,7 @@ def main():
 
     mqtt.subscribe(baby_topic, on_baby_state, qos=1)
 
-    # HTTP server (mobile/web can call this)
+    # HTTP server 
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 
