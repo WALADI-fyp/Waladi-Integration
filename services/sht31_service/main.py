@@ -37,7 +37,7 @@ def main():
     )
     client.connect()
 
-    # 3) Initsensor 
+    # 3) Init sensor 
     sensor = SHT31(bus_id=1, address=0x44)
 
     try:
@@ -50,10 +50,10 @@ def main():
                 continue
 
             msg = make_message(
-                device_id=device_id,
+                
                 source="sht31_service",
                 data={
-                    "temp_c": round(float(temp_c), 2),
+                    "room_temp_c": round(float(temp_c), 2),
                     "humidity_rh": round(float(humidity_rh), 2),
                 },
             )

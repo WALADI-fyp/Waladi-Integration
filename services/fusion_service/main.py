@@ -45,7 +45,7 @@ def main():
         data = msg.get("data", {})
 
         latest_env = {
-            "temp_c": data.get("temp_c"),
+            "room_temp_c": data.get("temp_c"),
             "humidity_rh": data.get("humidity_rh"),
         }
         latest_env_ts = msg.get("ts")
@@ -57,18 +57,18 @@ def main():
 
     try:
         while True:
-     
-            now = int(time.time() * 1000)
-            env_age_ms = None if latest_env_ts is None else (now - latest_env_ts)
 
             state = make_message(
-                device_id=device_id,
+                
                 source="fusion_service",
                 data={
-                    "env": latest_env,
-                    "env_age_ms": env_age_ms,
-                    "breathing": {"status": "unknown"},
-                    "audio": {"status": "unknown"},
+                
+                "breathing_rate_bpm": None,      
+                "heart_rate_bpm": None,         
+                "room_temperature_c": latest_env.get("room_temp_c"),  
+                "body_temperature_c": None,     
+                "room_humidity_rh": latest_env.get("humidity_rh"),   
+                
                 },
             )
 
