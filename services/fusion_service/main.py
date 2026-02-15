@@ -38,7 +38,7 @@ def main():
     latest_env_ts = None  
 
  
-    def on_env(topic: str, msg: dict):
+    def env_callback(topic: str, msg: dict):
         nonlocal latest_env, latest_env_ts
 
      
@@ -52,7 +52,7 @@ def main():
 
         print(f"[fusion] env update: {latest_env}")
 
-    client.subscribe(sht_topic, on_env, qos=1)
+    client.subscribe(sht_topic, env_callback, qos=1)
 
 
     try:
