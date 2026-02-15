@@ -12,9 +12,7 @@ def load_yaml(path: str) -> dict:
 
 
 def main():
-    # --------------------------
-    # 1) Load configuration
-    # --------------------------
+  
     mqtt_cfg = load_yaml("config/mqtt.yaml")
     topics = load_yaml("config/topics.yaml")["topics"]
 
@@ -23,9 +21,7 @@ def main():
     sht_topic = topics["sht31_env"]
     state_topic = topics["baby_state"]
 
-    # --------------------------
-    # 2) Connect to broker
-    # --------------------------
+  
     client = MqttClient(
         client_id="fusion_service",
         host=mqtt_cfg["broker"]["host"],
@@ -36,19 +32,16 @@ def main():
     )
     client.connect()
 
-    # --------------------------
-    # 3) In-memory "latest values"
-    # --------------------------
-    latest_env = {"temp_c": None, "humidity_rh": None}
-    latest_env_ts = None  # timestamp of last env message received
+    
 
-    # --------------------------
-    # 4) Subscriber callback
-    # --------------------------
+    latest_env = {"temp_c": None, "humidity_rh": None}
+    latest_env_ts = None  
+
+ 
     def on_env(topic: str, msg: dict):
         nonlocal latest_env, latest_env_ts
 
-        # msg is the standard structure: {ts, device_id, source, data}
+     
         data = msg.get("data", {})
 
         latest_env = {
@@ -61,12 +54,10 @@ def main():
 
     client.subscribe(sht_topic, on_env, qos=1)
 
-    # --------------------------
-    # 5) Publish combined state
-    # --------------------------
+
     try:
         while True:
-            # Simple "freshness" indicator: do we have recent env?
+     
             now = int(time.time() * 1000)
             env_age_ms = None if latest_env_ts is None else (now - latest_env_ts)
 
@@ -81,7 +72,7 @@ def main():
                 },
             )
 
-            # retain=True so any new subscriber instantly gets latest state
+            
             client.publish_json(state_topic, state, qos=1, retain=True)
             time.sleep(1.0)
     finally:
