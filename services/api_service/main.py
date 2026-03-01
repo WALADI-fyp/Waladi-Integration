@@ -9,8 +9,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 from shared.mqtt_client import MqttClient
+from config.device import get_device_id
 
 app = FastAPI()
+
+# Unique per-device ID — generated once, persisted to config/device_id.txt
+DEVICE_ID: str = get_device_id()
 
 _latest_state: Optional[Dict[str, Any]] = None
 _subscribers: List[asyncio.Queue] = []
@@ -30,11 +34,17 @@ async def startup():
     _loop = asyncio.get_event_loop()
 
 
-# ── existing endpoints ────────────────────────────────────────────────────────
+# ── endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/status")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/device-id")
+def device_id_endpoint():
+    """Returns this Pi's unique device ID. Used by the app during pairing."""
+    return {"device_id": DEVICE_ID}
 
 
 @app.get("/state")
@@ -43,31 +53,22 @@ def state():
         return _latest_state if _latest_state is not None else {"status": "no_state_yet"}
 
 
-# ── new: real-time SSE stream ─────────────────────────────────────────────────
+# ── SSE stream ────────────────────────────────────────────────────────────────
 
 @app.get("/stream")
 async def stream(request: Request):
     """
     Server-Sent Events endpoint.
-    Connect once and receive every baby-state update as it arrives.
-
-    Each event looks like:
-        data: {"ts":1234567890,"source":"fusion_service","data":{...}}\n\n
-
-    Usage examples:
-        curl http://<pi-ip>:8000/stream
-        EventSource("http://<pi-ip>:8000/stream")   // browser / JS
-        URLSession with text/event-stream            // Swift / iOS
+    Each event: data: {"device_id":"waladi-a3f9c2d1","ts":...,"source":"fusion_service","data":{...}}
     """
     queue: asyncio.Queue = asyncio.Queue()
 
     with _lock:
         _subscribers.append(queue)
-        snapshot = _latest_state  # send whatever we already have immediately
+        snapshot = _latest_state
 
     async def event_generator():
         try:
-            # Push the current state the moment the client connects
             if snapshot is not None:
                 yield f"data: {json.dumps(snapshot)}\n\n"
 
@@ -78,7 +79,6 @@ async def stream(request: Request):
                     payload = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield f"data: {json.dumps(payload)}\n\n"
                 except asyncio.TimeoutError:
-                    # Keep-alive comment so proxies don't drop the connection
                     yield ": keep-alive\n\n"
         finally:
             with _lock:
@@ -90,15 +90,14 @@ async def stream(request: Request):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disables nginx buffering if you're behind one
+            "X-Accel-Buffering": "no",
         },
     )
 
 
-# ── internal broadcast helper (called from MQTT thread) ──────────────────────
+# ── broadcast helper ──────────────────────────────────────────────────────────
 
 def _broadcast(payload: dict):
-    """Push a new payload to every connected SSE client."""
     if _loop is None:
         return
     with _lock:
@@ -129,6 +128,7 @@ def main():
 
     def on_baby_state(topic: str, payload: dict):
         global _latest_state
+        payload["device_id"] = DEVICE_ID  # stamp unique device ID on every message
         with _lock:
             _latest_state = payload
         _broadcast(payload)
