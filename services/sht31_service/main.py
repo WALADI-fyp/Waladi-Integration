@@ -40,23 +40,28 @@ def main():
     # 3) Init sensor 
     sensor = SHT31(bus_id=1, address=0x44)
 
+    counter = 0
+
     try:
         while True:
             try:
                 temp_c, humidity_rh = sensor.read()
-            except Exception as e:
-                print(f"[sht31_service] read failed: {e}")
-                time.sleep(1.0)
-                continue
-
-            msg = make_message(
-                
-                source="sht31_service",
-                data={
+                data = {
                     "room_temp_c": round(float(temp_c), 2),
                     "humidity_rh": round(float(humidity_rh), 2),
-                },
-            )
+                    "mock": False,
+                }
+            except Exception as e:
+                # Sensor not connected or read failed — publish incrementing mock values
+                print(f"[sht31_service] sensor unavailable ({e}), using mock counter={counter}")
+                data = {
+                    "room_temp_c": counter,
+                    "humidity_rh": counter,
+                    "mock": True,
+                }
+                counter += 1
+
+            msg = make_message(source="sht31_service", data=data)
 
             client.publish_json(topic, msg, qos=1, retain=False)
             print(f"published -> {topic}: {msg}")
