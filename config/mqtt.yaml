@@ -1,9 +1,10 @@
 broker:
-  host: "localhost"
-  port: 1883
-  username: null
-  password: null
+  host: "ra216119.ala.eu-central-1.emqxsl.com"
+  port: 8883
+  tls: true
+  username: "waladi_pi"       # <-- set the username you created in EMQX console
+  password: "123456"       # <-- set the password you created in EMQX console
 
 client:
   keepalive: 30
-  device_id: "waladi_pi"
+  device_id: "waladi-dbb2e0f4"

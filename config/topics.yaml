@@ -1,3 +1,4 @@
 topics:
-  sht31_env: "sensors/sht31/env"
-  baby_state: "state/baby"
+  sht31_env: sensors/sht31/env
+  baby_state: state/baby
+  camera_snapshot: camera/snapshot
