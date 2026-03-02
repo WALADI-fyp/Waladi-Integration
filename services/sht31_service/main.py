@@ -4,7 +4,8 @@ import yaml
 from shared.mqtt_client import MqttClient
 from shared.message import make_message
 from services.sht31_service.sht31_driver import SHT31
-
+from config.device import get_device_id
+device_id = get_device_id()
 
 def load_yaml(path: str) -> dict:
     with open(path, "r") as f:
@@ -19,7 +20,7 @@ def main():
     host = mqtt_cfg["broker"]["host"]
     port = mqtt_cfg["broker"]["port"]
     keepalive = mqtt_cfg["client"]["keepalive"]
-    device_id = mqtt_cfg["client"]["device_id"]
+ 
 
     username = mqtt_cfg["broker"].get("username")
     password = mqtt_cfg["broker"].get("password")
@@ -30,7 +31,7 @@ def main():
     tls = mqtt_cfg["broker"].get("tls", False)
 
     client = MqttClient(
-        client_id="sht31_service",
+        client_id=f"sht31_{device_id}",
         host=host,
         port=port,
         keepalive=keepalive,

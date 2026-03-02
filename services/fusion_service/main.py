@@ -4,6 +4,8 @@ import yaml
 from shared.mqtt_client import MqttClient
 from shared.message import make_message
 
+from config.device import get_device_id
+device_id = get_device_id()
 
 def load_yaml(path: str) -> dict:
     """Load YAML into a Python dict."""
@@ -16,14 +18,12 @@ def main():
     mqtt_cfg = load_yaml("config/mqtt.yaml")
     topics = load_yaml("config/topics.yaml")["topics"]
 
-    device_id = mqtt_cfg["client"]["device_id"]
-
     sht_topic = topics["sht31_env"]
     state_topic = topics["baby_state"]
 
   
     client = MqttClient(
-        client_id="fusion_service",
+        client_id=f"fusion_{device_id}",
         host=mqtt_cfg["broker"]["host"],
         port=mqtt_cfg["broker"]["port"],
         keepalive=mqtt_cfg["client"]["keepalive"],

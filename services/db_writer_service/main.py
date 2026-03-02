@@ -30,6 +30,7 @@ def main():
         sslmode=db_cfg.get("sslmode", "require"),
     )
     db.connect()
+    db.init_db()
 
     # ── Resolve user_id (retry until device is paired via the app) ───────────
     user_id = None
