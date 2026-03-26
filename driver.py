@@ -9,6 +9,7 @@ SERVICES = [
     "services.api_service.main",
     "services.camera_service.main",
     "services.db_writer_service.main",
+    "services/mmwave_vitals_service.main",
 ]
 
 processes = []
