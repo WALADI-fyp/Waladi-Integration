@@ -1,32 +1,22 @@
-import re
 import serial
 import time
-from typing import Optional, Tuple
+from typing import Optional
 
 
 class MmwaveVitalsSensor:
-    """
-    Reads breathing rate and heart rate from a serial-connected mmWave sensor.
-
-    Expected output examples can be adapted inside parse_line():
-      - 'Breathing rate: 18'
-      - 'Heart rate: 72'
-      - 'breathing_rate=18,heart_rate=72'
-    """
-
     def __init__(
         self,
         port: str = "/dev/ttyAMA0",
         baudrate: int = 115200,
-        timeout: float = 1.0,
+        timeout: float = 0.2,
+        debug: bool = True,
     ):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.debug = debug
         self.ser: Optional[serial.Serial] = None
-
-        self._latest_breathing: Optional[float] = None
-        self._latest_heart: Optional[float] = None
+        self.buffer = bytearray()
 
     def connect(self) -> None:
         self.ser = serial.Serial(
@@ -40,58 +30,46 @@ class MmwaveVitalsSensor:
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-    def parse_line(self, line: str) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Parse one line and update breathing / heart when present.
-        Adjust regexes to match your proven script output.
-        """
-        breathing = None
-        heart = None
-
-        # Example 1: "Breathing rate: 18"
-        m = re.search(r"breathing(?:\s*rate)?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", line, re.IGNORECASE)
-        if m:
-            breathing = float(m.group(1))
-
-        # Example 2: "Heart rate: 72"
-        m = re.search(r"heart(?:\s*rate)?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", line, re.IGNORECASE)
-        if m:
-            heart = float(m.group(1))
-
-        return breathing, heart
-
-    def read(self, max_wait_s: float = 5.0) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Read until we get fresh values or timeout.
-        Returns the latest known breathing and heart rate.
-        """
+    def read_raw_chunks(self):
         if not self.ser or not self.ser.is_open:
             raise RuntimeError("Sensor serial port is not connected")
 
-        deadline = time.time() + max_wait_s
+        data = self.ser.read(128)
+        if data:
+            self.buffer.extend(data)
+            if self.debug:
+                print("[RAW HEX]", " ".join(f"{b:02X}" for b in data))
 
-        while time.time() < deadline:
-            raw = self.ser.readline()
-            if not raw:
-                continue
+    def extract_frames(self):
+        """
+        Very simple frame finder for debugging.
+        Looks for FF 01 and tries to split until next FF 01.
+        """
+        frames = []
 
-            try:
-                line = raw.decode("utf-8", errors="ignore").strip()
-            except Exception:
-                continue
+        while True:
+            start = self.buffer.find(b"\xFF\x01")
+            if start == -1:
+                if len(self.buffer) > 2048:
+                    self.buffer = self.buffer[-256:]
+                break
 
-            if not line:
-                continue
+            next_start = self.buffer.find(b"\xFF\x01", start + 2)
+            if next_start == -1:
+                if start > 0:
+                    del self.buffer[:start]
+                break
 
-            breathing, heart = self.parse_line(line)
+            frame = bytes(self.buffer[start:next_start])
+            frames.append(frame)
+            del self.buffer[:next_start]
 
-            if breathing is not None:
-                self._latest_breathing = breathing
-            if heart is not None:
-                self._latest_heart = heart
+        return frames
 
-            # Return once at least one meaningful value has been updated
-            if breathing is not None or heart is not None:
-                return self._latest_breathing, self._latest_heart
-
-        return self._latest_breathing, self._latest_heart
+    def debug_read_frames(self, duration_s: float = 5.0):
+        end_time = time.time() + duration_s
+        while time.time() < end_time:
+            self.read_raw_chunks()
+            frames = self.extract_frames()
+            for frame in frames:
+                print("[FRAME]", " ".join(f"{b:02X}" for b in frame))
