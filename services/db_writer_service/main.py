@@ -32,19 +32,23 @@ def main():
     db.connect()
     db.init_db()
 
-    # ── Resolve user_id (retry until device is paired via the app) ───────────
+    # ── Resolve user_id (retry up to 3 times, then fall back to "unassigned") ──
     user_id = None
-    print(f"[db_writer] waiting for device '{device_id}' to be paired in app...")
-    while user_id is None:
+    print(f"[db_writer] looking up paired user for device '{device_id}'...")
+    for attempt in range(3):
         try:
             user_id = db.get_user_id(device_id)
         except Exception as e:
             print(f"[db_writer] DB error looking up user_id: {e}")
-        if user_id is None:
-            print("[db_writer] device not yet paired — retrying in 10s")
-            time.sleep(10)
+        if user_id:
+            print(f"[db_writer] paired to user_id={user_id}")
+            break
+        print(f"[db_writer] device not yet paired (attempt {attempt + 1}/3) — retrying in 5s")
+        time.sleep(5)
 
-    print(f"[db_writer] paired to user_id={user_id}")
+    if not user_id:
+        user_id = "unassigned"
+        print(f"[db_writer] no pairing found — writing with user_id='unassigned' until app is linked")
 
     # ── Connect to EMQX and subscribe to fused state ─────────────────────────
     mqtt = MqttClient(

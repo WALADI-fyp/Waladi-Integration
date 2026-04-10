@@ -1,7 +1,7 @@
 timescale:
-  host: "v10mr1yybq.l0d10leccx.tsdb.cloud.timescale.com"
-  port: 30263
+  host: "lbww3motz5.l0d10leccx.tsdb.cloud.timescale.com"
+  port: 36220
   dbname: "tsdb"
   user: "tsdbadmin"
-  password: "snu0ylxbjv6i4cwp"
+  password: "e4bofl5umer8ahdi"
   sslmode: "require"

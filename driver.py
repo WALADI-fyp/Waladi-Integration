@@ -6,10 +6,10 @@ import os
 SERVICES = [
     "services.sht31_service.main",
     "services.fusion_service.main",
-    "services.api_service.main",
     "services.camera_service.main",
     "services.db_writer_service.main",
-    "services/mmwave_vitals_service.main",
+    "services.mmwave_vitals_service.main",
+    "services.thermal_camera_service.main",
 ]
 
 processes = []
@@ -37,9 +37,9 @@ if __name__ == "__main__":
         processes.append(p)
         print(f"[driver] started {service} (pid={p.pid})")
 
-    print("[driver] all services running:")
-    print("[driver]   sensor stream → http://<pi-ip>:8000/stream")
-    print("[driver]   camera stream → http://<pi-ip>:8001/video")
+    print("[driver] all services running")
+    print("[driver]   camera snapshot → http://<pi-ip>:8001/snapshot")
+    print("[driver]   data flowing via EMQX MQTT broker")
     print("[driver] press Ctrl+C to stop\n")
 
     # Wait — if any service crashes, shut everything else down too
