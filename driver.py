@@ -10,6 +10,7 @@ SERVICES = [
     "services.db_writer_service.main",
     "services.mmwave_vitals_service.main",
     "services.thermal_camera_service.main",
+    "services.ai_pose_service.main",
 ]
 
 processes = []

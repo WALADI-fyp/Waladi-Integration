@@ -16,7 +16,7 @@ def load_yaml(path: str) -> dict:
 
 def main():
     mqtt_cfg = load_yaml("config/mqtt.yaml")
-    topics = load_yaml("config/topics.yaml")["topics"]
+    topics   = load_yaml("config/topics.yaml")["topics"]
 
     vitals_topic = topics["vital_signs"]
 
@@ -32,7 +32,7 @@ def main():
     client.connect()
 
     sensor = MmwaveVitalsSensor(
-        port="/dev/ttyAMA0",
+        port="/dev/ttyACM0",
         baudrate=115200,
         timeout=1.0,
     )
@@ -41,28 +41,25 @@ def main():
 
     try:
         sensor.connect()
+        print("[mmwave_vitals_service] sensor connected, reading vitals...")
 
         while True:
             try:
                 breathing_rate_bpm, heart_rate_bpm = sensor.read(max_wait_s=5.0)
 
-                data = {
-                    "breathing_rate_bpm": breathing_rate_bpm,
-                    "heart_rate_bpm": heart_rate_bpm,
-                    "mock": False,
-                }
+                is_mock = (breathing_rate_bpm is None or heart_rate_bpm is None)
 
-                # If sensor connected but values are still missing, mark them clearly
-                if breathing_rate_bpm is None or heart_rate_bpm is None:
-                    data["mock"] = True
-                    data["note"] = "sensor connected but no complete vitals frame yet"
+                data = {
+                    "breathing_rate_bpm": breathing_rate_bpm if breathing_rate_bpm is not None else counter,
+                    "heart_rate_bpm":     heart_rate_bpm     if heart_rate_bpm     is not None else counter,
+                    "mock": is_mock,
+                }
 
             except Exception as e:
                 print(f"[mmwave_vitals_service] sensor read failed: {e}")
-
                 data = {
                     "breathing_rate_bpm": counter,
-                    "heart_rate_bpm": counter,
+                    "heart_rate_bpm":     counter,
                     "mock": True,
                     "error": str(e),
                 }

@@ -1,22 +1,26 @@
-import serial
+import re
 import time
-from typing import Optional
+import serial
+from typing import Optional, Tuple
+
+breath_re  = re.compile(r"breath_rate:\s*([0-9.]+)")
+heart_re   = re.compile(r"heart_rate:\s*([0-9.]+)")
 
 
 class MmwaveVitalsSensor:
     def __init__(
         self,
-        port: str = "/dev/ttyAMA0",
+        port: str = "/dev/ttyACM0",
         baudrate: int = 115200,
-        timeout: float = 0.2,
-        debug: bool = True,
+        timeout: float = 1.0,
     ):
-        self.port = port
+        self.port     = port
         self.baudrate = baudrate
-        self.timeout = timeout
-        self.debug = debug
+        self.timeout  = timeout
         self.ser: Optional[serial.Serial] = None
-        self.buffer = bytearray()
+
+        self._latest_breath: Optional[float] = None
+        self._latest_heart:  Optional[float] = None
 
     def connect(self) -> None:
         self.ser = serial.Serial(
@@ -24,52 +28,48 @@ class MmwaveVitalsSensor:
             baudrate=self.baudrate,
             timeout=self.timeout,
         )
-        time.sleep(0.2)
+        time.sleep(2)  # let serial settle
+        print(f"[mmwave] opened {self.port} at {self.baudrate}")
 
     def close(self) -> None:
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-    def read_raw_chunks(self):
+    def read(self, max_wait_s: float = 5.0) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Read lines from serial until we get both breath_rate and heart_rate,
+        or until max_wait_s seconds have passed.
+        Returns (breathing_rate_bpm, heart_rate_bpm).
+        """
         if not self.ser or not self.ser.is_open:
-            raise RuntimeError("Sensor serial port is not connected")
+            raise RuntimeError("Serial port not connected")
 
-        data = self.ser.read(128)
-        if data:
-            self.buffer.extend(data)
-            if self.debug:
-                print("[RAW HEX]", " ".join(f"{b:02X}" for b in data))
+        deadline = time.time() + max_wait_s
+        got_breath = False
+        got_heart  = False
 
-    def extract_frames(self):
-        """
-        Very simple frame finder for debugging.
-        Looks for FF 01 and tries to split until next FF 01.
-        """
-        frames = []
+        while time.time() < deadline:
+            raw = self.ser.readline()
+            if not raw:
+                continue
 
-        while True:
-            start = self.buffer.find(b"\xFF\x01")
-            if start == -1:
-                if len(self.buffer) > 2048:
-                    self.buffer = self.buffer[-256:]
+            line = raw.decode("utf-8", errors="ignore").strip()
+            if not line:
+                continue
+
+            print(f"[mmwave] RAW: {line}")
+
+            m = breath_re.search(line)
+            if m:
+                self._latest_breath = float(m.group(1))
+                got_breath = True
+
+            m = heart_re.search(line)
+            if m:
+                self._latest_heart = float(m.group(1))
+                got_heart = True
+
+            if got_breath and got_heart:
                 break
 
-            next_start = self.buffer.find(b"\xFF\x01", start + 2)
-            if next_start == -1:
-                if start > 0:
-                    del self.buffer[:start]
-                break
-
-            frame = bytes(self.buffer[start:next_start])
-            frames.append(frame)
-            del self.buffer[:next_start]
-
-        return frames
-
-    def debug_read_frames(self, duration_s: float = 5.0):
-        end_time = time.time() + duration_s
-        while time.time() < end_time:
-            self.read_raw_chunks()
-            frames = self.extract_frames()
-            for frame in frames:
-                print("[FRAME]", " ".join(f"{b:02X}" for b in frame))
+        return self._latest_breath, self._latest_heart

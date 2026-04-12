@@ -1,0 +1,17 @@
+ai:
+  # Path to the NCNN model directory (must end with _ncnn_model)
+  model_dir: "./models/v26n-daynight-150epoch_ncnn_model"
+
+  # Camera snapshot URL — points to camera_service running locally
+  camera_url: "http://localhost:8001/snapshot"
+  source_mode: "snapshot"   # "snapshot" or "mjpeg"
+
+  # Processing rate
+  target_fps: 1
+
+  # Sleep detection (requires PFLD model download on first run)
+  sleep_detection: true
+  sleep_models_dir: "./models/pfld"
+
+  # Output dir for saved risky frames and log file
+  output_dir: "./ai_output"

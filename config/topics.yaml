@@ -3,4 +3,5 @@ topics:
   vital_signs: "sensors/mmwave/vitals"
   baby_state: "state/baby"
   camera_snapshot: "camera/snapshot"
-  thermal_hotspot: waladi/sensors/thermal_hotspot
+  thermal_hotspot: "waladi/sensors/thermal_hotspot"
+  ai_pose: "waladi/ai/pose"
