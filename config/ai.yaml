@@ -1,6 +1,6 @@
 ai:
   # Path to the NCNN model directory (must end with _ncnn_model)
-  model_dir: "./models/v26n-daynight-150epoch_ncnn_model"
+  model_dir: "/home/pi/Desktop/Waladi-Models/infant-pose-model/pretrained_models/v26-model-set/v26n-daynight-150epoch_ncnn_model"
 
   # Camera snapshot URL — points to camera_service running locally
   camera_url: "http://localhost:8001/snapshot"
@@ -10,7 +10,7 @@ ai:
   target_fps: 1
 
   # Sleep detection (requires PFLD model download on first run)
-  sleep_detection: true
+  sleep_detection: false
   sleep_models_dir: "./models/pfld"
 
   # Output dir for saved risky frames and log file

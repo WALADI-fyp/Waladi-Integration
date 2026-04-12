@@ -113,8 +113,6 @@ def main():
         nose   = result.get("nose_confidence")
         status = "RISKY" if result.get("is_risky") else "SAFE"
         state  = sleep_info.get("baby_state", "unknown")
-        print(f"[ai_pose] nose={nose:.3f if nose else 'None'} status={status} sleep={state}")
-
     # ── Build frame source and run ─────────────────────────────────────────────
     class _FakeArgs:
         """Minimal args object so build_frame_source works without argparse."""
