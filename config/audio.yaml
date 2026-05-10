@@ -9,6 +9,6 @@ audio:
   cry_class_ids: [20, 21, 23]
   cry_prob_threshold: 0.20
   cry_confirm_seconds: 0.5
-  silence_confirm_secs: 0.5
+  silence_confirm_secs: 8.0
   model_samples: 15600
   hop_samples: 8000
