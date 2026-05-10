@@ -76,8 +76,6 @@ def main():
         ),
         risk_detection=RiskDetectionConfig(
             normal_fps=target_fps,
-            risk_threshold=0.50,          # nose confidence below this = risky
-            consecutive_risk_frames=2,    # 2 consecutive frames needed (was 5)
         ),
         blanket_detection=BlanketDetectionConfig(),
         sleep_detection=SleepDetectionConfig(
@@ -90,19 +88,41 @@ def main():
         ),
     )
 
+    # ── Sticky risky state machine ────────────────────────────────────────────
+    # The model resets is_risky on a single high-confidence frame.
+    # We require SAFE_FRAMES_TO_CLEAR consecutive safe frames before clearing.
+    _risky_state      = False
+    _safe_frame_count = 0
+    SAFE_FRAMES_TO_CLEAR = 10   # ~10s at 1 FPS to clear risky state
+    NOSE_RISKY_THRESHOLD = 0.50
+
     # ── on_result callback — publishes every frame result to MQTT ──────────────
     def on_result(result: Dict, _frame: np.ndarray) -> None:
-        sleep_info  = result.get("sleep", {})
+        nonlocal _risky_state, _safe_frame_count
+
+        sleep_info   = result.get("sleep", {})
         blanket_info = result.get("blanket", {})
+        nose_conf    = result.get("nose_confidence") or 0.0
+
+        # Sticky state: go risky immediately on low confidence,
+        # but only clear after SAFE_FRAMES_TO_CLEAR consecutive safe frames
+        if nose_conf < NOSE_RISKY_THRESHOLD or result.get("is_risky", False):
+            _risky_state      = True
+            _safe_frame_count = 0
+        else:
+            _safe_frame_count += 1
+            if _safe_frame_count >= SAFE_FRAMES_TO_CLEAR:
+                _risky_state      = False
+                _safe_frame_count = 0
 
         payload = make_message(
             source="ai_pose_service",
             data={
                 "device_id":        device_id,
                 "nose_confidence":  result.get("nose_confidence"),
-                "is_risky":         result.get("is_risky", False),
-                "baby_state":       sleep_info.get("baby_state"),        # "awake" | "asleep"
-                "ear":              sleep_info.get("ear"),                # eye aspect ratio
+                "is_risky":         _risky_state,
+                "baby_state":       sleep_info.get("baby_state"),
+                "ear":              sleep_info.get("ear"),
                 "blanket_flag":     blanket_info.get("blanket_flag", False),
                 "burst_activated":  result.get("burst_activated", False),
                 "burst_false_alarm":result.get("burst_false_alarm", False),
@@ -113,7 +133,7 @@ def main():
 
         # Console summary
         nose   = result.get("nose_confidence")
-        status = "RISKY" if result.get("is_risky") else "SAFE"
+        status = "RISKY" if _risky_state else "SAFE"
         state  = sleep_info.get("baby_state", "unknown")
     # ── Build frame source and run ─────────────────────────────────────────────
     class _FakeArgs:
