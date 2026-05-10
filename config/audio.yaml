@@ -1,26 +1,14 @@
 audio:
-  # INMP441 microphone ALSA device — run `arecord -l` to confirm
   card_device: "hw:2,0"
   src_rate: 48000
   src_format: "S32_LE"
   src_channels: 2
   out_rate: 16000
-
-  # Fixed gain in dB applied to the audio stream (no normalize on streams)
   gain_db: 15
-
-  # YAMNet TFLite model path
   model_path: "/home/pi/waladi_models/yamnet/yamnet.tflite"
-
-  # YAMNet class IDs for crying sounds
-  # 20=Baby cry, 21=Crying/sobbing, 23=Whimper
   cry_class_ids: [20, 21, 23]
-
-  # Detection thresholds
-  cry_prob_threshold: 0.20     # score above this = "possible cry"
-  cry_confirm_seconds: 2.0     # sustained above threshold → CRYING (alert starts)
-  silence_confirm_secs: 2.0    # sustained below threshold → QUIET (alert ends)
-
-  # Sliding window — model sees ~1s, we slide every hop_samples
+  cry_prob_threshold: 0.20
+  cry_confirm_seconds: 2.0
+  silence_confirm_secs: 2.0
   model_samples: 15600
-  hop_samples: 8000            # inference every 0.5s
+  hop_samples: 8000

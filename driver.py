@@ -49,3 +49,4 @@ if __name__ == "__main__":
             if p.poll() is not None:
                 print(f"[driver] a service exited unexpectedly (pid={p.pid}), shutting down")
                 shutdown(None, None)
+        import time; time.sleep(1)
