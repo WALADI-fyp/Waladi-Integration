@@ -11,6 +11,7 @@ SERVICES = [
     "services.mmwave_vitals_service.main",
     "services.thermal_camera_service.main",
     "services.ai_pose_service.main",
+    "services.cry_detection_service.main",
 ]
 
 processes = []
@@ -43,7 +44,6 @@ if __name__ == "__main__":
     print("[driver]   data flowing via EMQX MQTT broker")
     print("[driver] press Ctrl+C to stop\n")
 
-    # Wait — if any service crashes, shut everything else down too
     while True:
         for p in processes:
             if p.poll() is not None:
