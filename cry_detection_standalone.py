@@ -57,7 +57,8 @@ SILENCE_CONFIRM_SECS = 2.0    # must stay below threshold this long → QUIET
 def _pip(*packages):
     """Install packages silently, skip if already present."""
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--quiet", *packages],
+        [sys.executable, "-m", "pip", "install", "--quiet",
+         "--break-system-packages", *packages],
         check=True,
     )
 
