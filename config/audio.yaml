@@ -8,7 +8,7 @@ audio:
   model_path: "/home/pi/waladi_models/yamnet/yamnet.tflite"
   cry_class_ids: [20, 21, 23]
   cry_prob_threshold: 0.20
-  cry_confirm_seconds: 2.0
-  silence_confirm_secs: 2.0
+  cry_confirm_seconds: 0.5
+  silence_confirm_secs: 0.5
   model_samples: 15600
   hop_samples: 8000
