@@ -2,13 +2,14 @@
 """
 Waladi Baby Cry Detection — standalone single-file script
 ==========================================================
-Handles everything: dependency checks, model download,
-conversion (TF Hub → TFLite → ONNX → NCNN), and real-time detection.
+Uses YAMNet TFLite model with tflite-runtime.
+No TensorFlow, no NCNN, no onnx2ncnn binary needed.
+
+First run: downloads yamnet.tflite (~3 MB) and installs tflite-runtime.
+Subsequent runs: starts immediately.
 
 Usage:
     python3 cry_detection_standalone.py
-
-Edit the CONFIG block below to match your setup.
 """
 
 import os
@@ -18,14 +19,16 @@ import subprocess
 import tempfile
 import time
 import wave
+import urllib.request
 from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════════════
 #  CONFIG — edit these to match your Pi setup
 # ══════════════════════════════════════════════════════════════════════
 
-# Where model files live (or will be created if missing)
-MODEL_DIR = Path.home() / "waladi_models" / "yamnet"
+# Where the .tflite model file will be saved
+MODEL_DIR  = Path.home() / "waladi_models" / "yamnet"
+MODEL_FILE = MODEL_DIR / "yamnet.tflite"
 
 # INMP441 microphone ALSA device  (run `arecord -l` to confirm)
 CARD_DEVICE   = "hw:2,0"
@@ -33,15 +36,10 @@ SRC_RATE      = 48000
 SRC_FORMAT    = "S32_LE"
 SRC_CHANNELS  = 2
 OUT_RATE      = 16000
-CHUNK_SECONDS = 1          # seconds of audio per inference call
-GAIN_DB       = 7          # applied after normalization (keep ≤ 10)
+CHUNK_SECONDS = 1        # seconds of audio per inference call
+GAIN_DB       = 7        # applied after normalization (keep ≤ 10)
 
-# NCNN layer names — verify against your yamnet_opt.param first few lines
-# Open it with: head -5 ~/waladi_models/yamnet/yamnet_opt.param
-INPUT_NAME  = "serving_default_waveform:0"
-OUTPUT_NAME = "PartitionedCall:0"
-
-# YAMNet class IDs for crying (verify against yamnet_class_map.csv)
+# YAMNet class IDs for crying (standard YAMNet class map)
 # 20 = Baby cry,  21 = Crying/sobbing,  23 = Whimper
 CRY_CLASS_IDS = [20, 21, 23]
 
@@ -55,7 +53,6 @@ SILENCE_CONFIRM_SECS = 2.0    # must stay below threshold this long → QUIET
 # ══════════════════════════════════════════════════════════════════════
 
 def _pip(*packages):
-    """Install packages silently, skip if already present."""
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "--quiet",
          "--break-system-packages", *packages],
@@ -65,225 +62,110 @@ def _pip(*packages):
 
 def ensure_sox():
     if shutil.which("sox") is None:
-        print("[setup] sox not found — installing via apt...")
+        print("[setup] Installing sox...")
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "sox"], check=True)
 
 
-def ensure_ncnn_python():
+def ensure_tflite_runtime():
+    """Try tflite-runtime, fall back to ai-edge-litert (newer Pi OS)."""
     try:
-        import ncnn  # noqa
+        import tflite_runtime.interpreter  # noqa
+        return
     except ImportError:
-        print("[setup] Installing ncnn Python package...")
-        _pip("ncnn")
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  MODEL SETUP  (TF Hub → TFLite → ONNX → NCNN)
-# ══════════════════════════════════════════════════════════════════════
-
-def _param_path() -> Path:
-    return MODEL_DIR / "yamnet_opt.param"
-
-def _bin_path() -> Path:
-    return MODEL_DIR / "yamnet_opt.bin"
-
-
-def model_exists() -> bool:
-    return _param_path().exists() and _bin_path().exists()
-
-
-def find_onnx2ncnn() -> str | None:
-    """Search common locations for the onnx2ncnn binary."""
-    candidates = [
-        shutil.which("onnx2ncnn"),
-        str(Path.home() / "ncnn/build/tools/onnx/onnx2ncnn"),
-        "/usr/local/bin/onnx2ncnn",
-        "/opt/ncnn/bin/onnx2ncnn",
-    ]
-    for c in candidates:
-        if c and Path(c).is_file():
-            return c
-    return None
-
-
-def find_ncnnoptimize() -> str | None:
-    candidates = [
-        shutil.which("ncnnoptimize"),
-        str(Path.home() / "ncnn/build/tools/ncnnoptimize"),
-        "/usr/local/bin/ncnnoptimize",
-    ]
-    for c in candidates:
-        if c and Path(c).is_file():
-            return c
-    return None
-
-
-def step1_export_tflite(out_dir: Path) -> Path:
-    """Download YAMNet from TF Hub and export to float32 TFLite."""
-    tflite_path = out_dir / "yamnet_float32.tflite"
-    if tflite_path.exists():
-        print("[model] TFLite already exists, skipping step 1.")
-        return tflite_path
-
-    print("[model] Step 1/3 — Downloading YAMNet from TF Hub and exporting TFLite...")
-    print("[model]   This may take a few minutes on first run (downloads ~30 MB).")
-
-    _pip("tensorflow", "tensorflow-hub")
-    import tensorflow as tf
-    import tensorflow_hub as hub
-
-    INPUT_LENGTH = 16000  # 1 second at 16 kHz
-
-    yamnet = hub.load("https://tfhub.dev/google/yamnet/1")
-
-    @tf.function(input_signature=[tf.TensorSpec(shape=[INPUT_LENGTH], dtype=tf.float32)])
-    def yamnet_fixed(waveform):
-        scores, _, _ = yamnet(waveform)
-        return scores
-
-    concrete_func = yamnet_fixed.get_concrete_function()
-
-    converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS,
-        tf.lite.OpsSet.SELECT_TF_OPS,
-    ]
-
-    tflite_model = converter.convert()
-    tflite_path.write_bytes(tflite_model)
-    print(f"[model]   Saved: {tflite_path} ({len(tflite_model)/1e6:.1f} MB)")
-    return tflite_path
-
-
-def step2_tflite_to_onnx(tflite_path: Path, out_dir: Path) -> Path:
-    """Convert TFLite → ONNX."""
-    onnx_path = out_dir / "yamnet.onnx"
-    if onnx_path.exists():
-        print("[model] ONNX already exists, skipping step 2.")
-        return onnx_path
-
-    print("[model] Step 2/3 — Converting TFLite → ONNX...")
-    _pip("tf2onnx", "onnx", "onnxruntime")
-
-    cmd = [
-        sys.executable, "-m", "tf2onnx.convert",
-        "--tflite", str(tflite_path),
-        "--output",  str(onnx_path),
-        "--opset",   "13",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print("[model] tf2onnx stderr:", result.stderr[-2000:])
-        raise RuntimeError("TFLite → ONNX conversion failed.")
-
-    print(f"[model]   Saved: {onnx_path}")
-    return onnx_path
-
-
-def step3_onnx_to_ncnn(onnx_path: Path, out_dir: Path):
-    """Simplify ONNX, then convert to NCNN .param/.bin and optimize."""
-    onnx2ncnn = find_onnx2ncnn()
-    if onnx2ncnn is None:
-        print(
-            "\n[model] ERROR: onnx2ncnn binary not found.\n"
-            "  Build it once on your Pi (or dev machine), then copy the binary:\n\n"
-            "    git clone https://github.com/Tencent/ncnn.git\n"
-            "    cd ncnn && mkdir build && cd build\n"
-            "    cmake -DNCNN_BUILD_TOOLS=ON -DCMAKE_BUILD_TYPE=Release ..\n"
-            "    make -j4\n"
-            "    # binary is at:  ncnn/build/tools/onnx/onnx2ncnn\n"
-            "    sudo cp ncnn/build/tools/onnx/onnx2ncnn /usr/local/bin/\n"
-            "    sudo cp ncnn/build/tools/ncnnoptimize  /usr/local/bin/\n\n"
-            "  Then re-run this script.\n"
-        )
-        sys.exit(1)
-
-    # Simplify ONNX
-    print("[model] Step 3/3 — Simplifying ONNX and converting to NCNN...")
-    sim_path = out_dir / "yamnet_sim.onnx"
+        pass
     try:
-        _pip("onnx-simplifier")
-        import onnx
-        from onnxsim import simplify
-        model = onnx.load(str(onnx_path))
-        model_sim, ok = simplify(model)
-        assert ok
-        onnx.save(model_sim, str(sim_path))
-        print("[model]   ONNX simplified OK")
-    except Exception as e:
-        print(f"[model]   onnxsim failed ({e}), using original ONNX")
-        shutil.copy(onnx_path, sim_path)
+        import ai_edge_litert.interpreter  # noqa
+        return
+    except ImportError:
+        pass
 
-    # onnx2ncnn
-    raw_param = out_dir / "yamnet_raw.param"
-    raw_bin   = out_dir / "yamnet_raw.bin"
-    result = subprocess.run(
-        [onnx2ncnn, str(sim_path), str(raw_param), str(raw_bin)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print("[model] onnx2ncnn stderr:", result.stderr[-2000:])
-        raise RuntimeError("ONNX → NCNN conversion failed.")
-    print("[model]   Raw NCNN .param/.bin generated")
+    print("[setup] Installing tflite-runtime...")
+    try:
+        _pip("tflite-runtime")
+        import tflite_runtime.interpreter  # noqa
+        return
+    except Exception:
+        pass
 
-    # ncnnoptimize (fp16 weights — halves .bin size, still runs fp32 at inference)
-    ncnnopt = find_ncnnoptimize()
-    param_out = _param_path()
-    bin_out   = _bin_path()
+    print("[setup] tflite-runtime failed, trying ai-edge-litert...")
+    _pip("ai-edge-litert")
 
-    if ncnnopt:
-        result = subprocess.run(
-            [ncnnopt, str(raw_param), str(raw_bin),
-             str(param_out), str(bin_out), "65536"],
-            capture_output=True, text=True,
+
+def get_interpreter_class():
+    """Return whichever Interpreter class is available."""
+    try:
+        from tflite_runtime.interpreter import Interpreter
+        return Interpreter
+    except ImportError:
+        pass
+    try:
+        from ai_edge_litert.interpreter import Interpreter
+        return Interpreter
+    except ImportError:
+        raise SystemExit(
+            "[setup] Could not import tflite Interpreter. "
+            "Try: pip install tflite-runtime --break-system-packages"
         )
-        if result.returncode == 0:
-            print(f"[model]   Optimised → {param_out.name}, {bin_out.name}")
-            raw_param.unlink(missing_ok=True)
-            raw_bin.unlink(missing_ok=True)
-        else:
-            print("[model]   ncnnoptimize failed, using raw files")
-            shutil.move(str(raw_param), str(param_out))
-            shutil.move(str(raw_bin),   str(bin_out))
-    else:
-        print("[model]   ncnnoptimize not found, using raw (slightly larger) files")
-        shutil.move(str(raw_param), str(param_out))
-        shutil.move(str(raw_bin),   str(bin_out))
 
-    print(f"[model]   .param: {param_out} ({param_out.stat().st_size/1024:.0f} KB)")
-    print(f"[model]   .bin:   {bin_out} ({bin_out.stat().st_size/1e6:.1f} MB)")
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODEL DOWNLOAD
+# ══════════════════════════════════════════════════════════════════════
+
+# Pre-built YAMNet TFLite model (~3.7 MB) — no conversion needed
+MODEL_URLS = [
+    "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/rpi/lite-model_yamnet_classification_tflite_1.tflite",
+    "https://tfhub.dev/google/lite-model/yamnet/classification/tflite/1?lite-format=tflite",
+]
+
+
+def _download(url: str, dest: Path) -> bool:
+    try:
+        print(f"[model] Trying: {url[:70]}...")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        if len(data) < 100_000:   # sanity check — real model is ~3.7 MB
+            return False
+        dest.write_bytes(data)
+        print(f"[model] Downloaded {len(data)/1e6:.1f} MB → {dest}")
+        return True
+    except Exception as e:
+        print(f"[model]   Failed: {e}")
+        return False
 
 
 def ensure_model():
-    """Full model pipeline: check → download → convert."""
-    if model_exists():
-        print(f"[model] Found existing model at {MODEL_DIR}")
+    if MODEL_FILE.exists() and MODEL_FILE.stat().st_size > 100_000:
+        print(f"[model] Found existing model at {MODEL_FILE}")
         return
 
-    print(f"[model] Model not found at {MODEL_DIR} — starting conversion pipeline...")
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    print("[model] Downloading YAMNet TFLite model (~3.7 MB)...")
 
-    tflite = step1_export_tflite(MODEL_DIR)
-    onnx   = step2_tflite_to_onnx(tflite, MODEL_DIR)
-    step3_onnx_to_ncnn(onnx, MODEL_DIR)
+    for url in MODEL_URLS:
+        if _download(url, MODEL_FILE):
+            return
 
-    if not model_exists():
-        raise RuntimeError("Model conversion finished but .param/.bin not found.")
-
-    print("[model] ✅ Model ready.")
+    raise SystemExit(
+        "\n[model] ERROR: Could not download the model automatically.\n"
+        "  Download manually on another machine and copy to the Pi:\n\n"
+        f"  scp yamnet.tflite pi@<PI_IP>:{MODEL_FILE}\n\n"
+        "  Download URL:\n"
+        f"  {MODEL_URLS[0]}\n"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
 #  AUDIO CAPTURE  (arecord → sox → 16-bit mono float32)
 # ══════════════════════════════════════════════════════════════════════
 
-def capture_chunk(tmp_dir: Path) -> "np.ndarray":
+def capture_chunk(tmp_dir: Path):
     import numpy as np
 
     raw_wav   = tmp_dir / "raw.wav"
     final_wav = tmp_dir / "final.wav"
 
-    # Record via arecord
     subprocess.run(
         [
             "arecord",
@@ -300,7 +182,6 @@ def capture_chunk(tmp_dir: Path) -> "np.ndarray":
         stderr=subprocess.DEVNULL,
     )
 
-    # sox: left channel only → normalize → gain → 16kHz mono 16-bit
     sox_cmd = [
         "sox", str(raw_wav),
         "-t", "wavpcm", "-b", "16", str(final_wav),
@@ -321,45 +202,47 @@ def capture_chunk(tmp_dir: Path) -> "np.ndarray":
     with wave.open(str(final_wav), "rb") as wf:
         raw = wf.readframes(wf.getnframes())
 
-    return (
-        __import__("numpy")
-        .frombuffer(raw, dtype="int16")
-        .astype("float32") / 32768.0
-    )
+    return np.frombuffer(raw, dtype="int16").astype("float32") / 32768.0
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  NCNN INFERENCE
+#  TFLITE INFERENCE
 # ══════════════════════════════════════════════════════════════════════
 
 def load_model():
-    import ncnn
-    net = ncnn.Net()
-    net.opt.use_vulkan_compute = False
-    net.opt.num_threads        = 4
-    net.load_param(str(_param_path()))
-    net.load_model(str(_bin_path()))
-    return net
+    import numpy as np
+    Interpreter = get_interpreter_class()
+
+    interp = Interpreter(model_path=str(MODEL_FILE))
+    interp.allocate_tensors()
+
+    inp_details = interp.get_input_details()
+    out_details = interp.get_output_details()
+
+    inp_shape = inp_details[0]["shape"]
+    print(f"[model] Input shape: {inp_shape}, Output shape: {out_details[0]['shape']}")
+
+    return interp, inp_details[0]["index"], out_details[0]["index"]
 
 
-def run_inference(net, waveform) -> float:
-    import ncnn
+def run_inference(interp, inp_idx: int, out_idx: int, waveform) -> float:
     import numpy as np
 
-    mat_in = ncnn.Mat(waveform)
-    ex     = net.create_extractor()
-    ex.input(INPUT_NAME, mat_in)
+    # YAMNet TFLite expects exactly 15600 samples (0.975s) or 16000 samples
+    # Trim or pad to match what the model expects
+    inp_shape    = interp.get_input_details()[0]["shape"]
+    expected_len = int(inp_shape[0])
+    n            = len(waveform)
 
-    ret, mat_out = ex.extract(OUTPUT_NAME)
-    if ret != 0:
-        print(
-            f"\n[cry] Inference error (ret={ret}). "
-            f"Check INPUT_NAME / OUTPUT_NAME at the top of this script.\n"
-            f"  Hint: run:  head -5 {_param_path()}"
-        )
-        return 0.0
+    if n >= expected_len:
+        w = waveform[:expected_len]
+    else:
+        w = np.pad(waveform, (0, expected_len - n))
 
-    scores = np.array(mat_out)
+    interp.set_tensor(inp_idx, w)
+    interp.invoke()
+
+    scores = interp.get_tensor(out_idx)   # shape: (num_classes,) or (N, num_classes)
     if scores.ndim == 1:
         scores = scores.reshape(1, -1)
 
@@ -378,18 +261,18 @@ def _print_banner(state: str, cry_prob: float):
     if state == "crying":
         print(
             f"\n{'='*52}\n"
-            f"  🚨  BABY CRYING DETECTED   (prob={cry_prob:.3f})\n"
+            f"  BABY CRYING DETECTED   (prob={cry_prob:.3f})\n"
             f"{'='*52}"
         )
     else:
         print(
             f"\n{'='*52}\n"
-            f"  ✅  Cry stopped / quiet    (prob={cry_prob:.3f})\n"
+            f"  Cry stopped / quiet    (prob={cry_prob:.3f})\n"
             f"{'='*52}"
         )
 
 
-def run_loop(net):
+def run_loop(interp, inp_idx: int, out_idx: int):
     state       = "no_cry"
     cry_start   = None
     nocry_start = None
@@ -405,7 +288,6 @@ def run_loop(net):
         tmp_dir = Path(tmp)
 
         while True:
-            # ── capture ──────────────────────────────────────
             try:
                 waveform = capture_chunk(tmp_dir)
             except subprocess.CalledProcessError as e:
@@ -413,11 +295,9 @@ def run_loop(net):
                 time.sleep(2)
                 continue
 
-            # ── infer ─────────────────────────────────────────
-            cry_prob = run_inference(net, waveform)
+            cry_prob = run_inference(interp, inp_idx, out_idx, waveform)
             now      = time.time()
 
-            # ── state machine ─────────────────────────────────
             if cry_prob >= CRY_PROB_THRESHOLD:
                 nocry_start = None
                 if cry_start is None:
@@ -435,13 +315,12 @@ def run_loop(net):
                     state = "no_cry"
                     _print_banner(state, cry_prob)
 
-            # ── status bar ────────────────────────────────────
             bar_len = 20
             filled  = int(min(cry_prob, 1.0) * bar_len)
-            bar     = "█" * filled + "░" * (bar_len - filled)
-            lbl     = "🚨 CRYING" if state == "crying" else "🔇 quiet "
+            bar     = "#" * filled + "." * (bar_len - filled)
+            lbl     = "CRYING" if state == "crying" else "quiet "
             print(
-                f"\r[{bar}] prob={cry_prob:.3f}  {lbl}  "
+                f"\r[{bar}] prob={cry_prob:.3f}  [{lbl}]  "
                 f"confirm={elapsed:.1f}s/{CRY_CONFIRM_SECONDS:.0f}s   ",
                 end="",
                 flush=True,
@@ -457,22 +336,16 @@ def main():
     print("  Waladi Cry Detection — startup")
     print("=" * 52)
 
-    # 1. System tools
     ensure_sox()
-    ensure_ncnn_python()
-
-    # 2. Model (download + convert if needed)
+    ensure_tflite_runtime()
     ensure_model()
 
-    # 3. Load NCNN model
-    print("[cry] Loading NCNN model into memory...")
-    import ncnn  # noqa — already ensured above
-    net = load_model()
-    print("[cry] Model ready.")
+    print("[cry] Loading model...")
+    interp, inp_idx, out_idx = load_model()
+    print("[cry] Model ready — starting detection loop")
 
-    # 4. Run
     try:
-        run_loop(net)
+        run_loop(interp, inp_idx, out_idx)
     except KeyboardInterrupt:
         print("\n[cry] Stopped.")
 
