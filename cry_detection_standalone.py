@@ -2,11 +2,8 @@
 """
 Waladi Baby Cry Detection — standalone single-file script
 ==========================================================
-Uses YAMNet TFLite model with tflite-runtime.
-No TensorFlow, no NCNN, no onnx2ncnn binary needed.
-
-First run: downloads yamnet.tflite (~3 MB) and installs tflite-runtime.
-Subsequent runs: starts immediately.
+Continuous streaming audio with overlapping inference windows.
+No gaps, no dropped cries.
 
 Usage:
     python3 cry_detection_standalone.py
@@ -16,37 +13,40 @@ import os
 import sys
 import shutil
 import subprocess
-import tempfile
 import time
-import wave
 import urllib.request
 from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════════════
-#  CONFIG — edit these to match your Pi setup
+#  CONFIG
 # ══════════════════════════════════════════════════════════════════════
 
-# Where the .tflite model file will be saved
 MODEL_DIR  = Path.home() / "waladi_models" / "yamnet"
 MODEL_FILE = MODEL_DIR / "yamnet.tflite"
 
-# INMP441 microphone ALSA device  (run `arecord -l` to confirm)
-CARD_DEVICE   = "hw:2,0"
-SRC_RATE      = 48000
-SRC_FORMAT    = "S32_LE"
-SRC_CHANNELS  = 2
-OUT_RATE      = 16000
-CHUNK_SECONDS = 1        # seconds of audio per inference call
-GAIN_DB       = 7        # applied after normalization (keep ≤ 10)
+# INMP441 mic — run `arecord -l` to confirm card number
+CARD_DEVICE  = "hw:2,0"
+SRC_RATE     = 48000
+SRC_CHANNELS = 2
+OUT_RATE     = 16000
 
-# YAMNet class IDs for crying (standard YAMNet class map)
-# 20 = Baby cry,  21 = Crying/sobbing,  23 = Whimper
+# Gain applied after normalization. Raise this if prob stays near 0.
+GAIN_DB = 15
+
+# Sliding window: model sees 15600 samples (~1s), we slide every HOP_SAMPLES
+# Smaller hop = more frequent checks, catches cries faster
+MODEL_SAMPLES = 15600          # fixed by YAMNet TFLite
+HOP_SAMPLES   = 8000           # slide every 0.5s
+
+# YAMNet class IDs for crying sounds
+# 20=Baby cry  21=Crying/sobbing  22=Shout  23=Whimper  498=Child speech
 CRY_CLASS_IDS = [20, 21, 23]
 
-# Detection thresholds
-CRY_PROB_THRESHOLD   = 0.35   # single-chunk score to count as "possible cry"
-CRY_CONFIRM_SECONDS  = 3.0    # must stay above threshold this long → CRYING
-SILENCE_CONFIRM_SECS = 2.0    # must stay below threshold this long → QUIET
+# Threshold — lower = more sensitive, higher = fewer false positives
+# Start at 0.20 and raise if you get false positives
+CRY_PROB_THRESHOLD   = 0.20
+CRY_CONFIRM_SECONDS  = 2.0    # seconds above threshold before declared CRYING
+SILENCE_CONFIRM_SECS = 2.0    # seconds below threshold before declared QUIET
 
 # ══════════════════════════════════════════════════════════════════════
 #  DEPENDENCY CHECK
@@ -59,245 +59,170 @@ def _pip(*packages):
         check=True,
     )
 
-
 def ensure_sox():
     if shutil.which("sox") is None:
         print("[setup] Installing sox...")
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "sox"], check=True)
 
-
-def ensure_tflite_runtime():
-    """Try tflite-runtime, fall back to ai-edge-litert (newer Pi OS)."""
-    try:
-        import tflite_runtime.interpreter  # noqa
-        return
-    except ImportError:
-        pass
-    try:
-        import ai_edge_litert.interpreter  # noqa
-        return
-    except ImportError:
-        pass
-
+def ensure_tflite():
+    for mod in ["tflite_runtime.interpreter", "ai_edge_litert.interpreter"]:
+        try:
+            __import__(mod)
+            return
+        except ImportError:
+            pass
     print("[setup] Installing tflite-runtime...")
     try:
         _pip("tflite-runtime")
-        import tflite_runtime.interpreter  # noqa
         return
     except Exception:
         pass
-
-    print("[setup] tflite-runtime failed, trying ai-edge-litert...")
+    print("[setup] Falling back to ai-edge-litert...")
     _pip("ai-edge-litert")
 
-
 def get_interpreter_class():
-    """Return whichever Interpreter class is available."""
-    try:
-        from tflite_runtime.interpreter import Interpreter
-        return Interpreter
-    except ImportError:
-        pass
-    try:
-        from ai_edge_litert.interpreter import Interpreter
-        return Interpreter
-    except ImportError:
-        raise SystemExit(
-            "[setup] Could not import tflite Interpreter. "
-            "Try: pip install tflite-runtime --break-system-packages"
-        )
-
+    for mod, cls in [
+        ("tflite_runtime.interpreter", "Interpreter"),
+        ("ai_edge_litert.interpreter", "Interpreter"),
+    ]:
+        try:
+            m = __import__(mod, fromlist=[cls])
+            return getattr(m, cls)
+        except ImportError:
+            pass
+    raise SystemExit("[setup] No tflite Interpreter found. pip install tflite-runtime")
 
 # ══════════════════════════════════════════════════════════════════════
 #  MODEL DOWNLOAD
 # ══════════════════════════════════════════════════════════════════════
 
-# Pre-built YAMNet TFLite model (~3.7 MB) — no conversion needed
 MODEL_URLS = [
     "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/rpi/lite-model_yamnet_classification_tflite_1.tflite",
     "https://tfhub.dev/google/lite-model/yamnet/classification/tflite/1?lite-format=tflite",
 ]
 
-
-def _download(url: str, dest: Path) -> bool:
-    try:
-        print(f"[model] Trying: {url[:70]}...")
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
-        if len(data) < 100_000:   # sanity check — real model is ~3.7 MB
-            return False
-        dest.write_bytes(data)
-        print(f"[model] Downloaded {len(data)/1e6:.1f} MB → {dest}")
-        return True
-    except Exception as e:
-        print(f"[model]   Failed: {e}")
-        return False
-
-
 def ensure_model():
     if MODEL_FILE.exists() and MODEL_FILE.stat().st_size > 100_000:
-        print(f"[model] Found existing model at {MODEL_FILE}")
+        print(f"[model] Using existing model at {MODEL_FILE}")
         return
-
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    print("[model] Downloading YAMNet TFLite model (~3.7 MB)...")
-
+    print("[model] Downloading YAMNet TFLite (~4 MB)...")
     for url in MODEL_URLS:
-        if _download(url, MODEL_FILE):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = r.read()
+            if len(data) < 100_000:
+                continue
+            MODEL_FILE.write_bytes(data)
+            print(f"[model] Downloaded {len(data)/1e6:.1f} MB")
             return
-
-    raise SystemExit(
-        "\n[model] ERROR: Could not download the model automatically.\n"
-        "  Download manually on another machine and copy to the Pi:\n\n"
-        f"  scp yamnet.tflite pi@<PI_IP>:{MODEL_FILE}\n\n"
-        "  Download URL:\n"
-        f"  {MODEL_URLS[0]}\n"
-    )
-
+        except Exception as e:
+            print(f"[model] URL failed: {e}")
+    raise SystemExit("[model] Could not download model. Copy yamnet.tflite manually to " + str(MODEL_FILE))
 
 # ══════════════════════════════════════════════════════════════════════
-#  AUDIO CAPTURE  (arecord → sox → 16-bit mono float32)
-# ══════════════════════════════════════════════════════════════════════
-
-def capture_chunk(tmp_dir: Path):
-    import numpy as np
-
-    raw_wav   = tmp_dir / "raw.wav"
-    final_wav = tmp_dir / "final.wav"
-
-    subprocess.run(
-        [
-            "arecord",
-            "-D", CARD_DEVICE,
-            "-c", str(SRC_CHANNELS),
-            "-r", str(SRC_RATE),
-            "-f", SRC_FORMAT,
-            "-t", "wav",
-            str(raw_wav),
-            "-d", str(CHUNK_SECONDS),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    sox_cmd = [
-        "sox", str(raw_wav),
-        "-t", "wavpcm", "-b", "16", str(final_wav),
-        "remix", "1",
-        "gain", "-n",
-    ]
-    if GAIN_DB != 0:
-        sox_cmd += ["gain", str(GAIN_DB)]
-    sox_cmd += ["rate", str(OUT_RATE), "channels", "1"]
-
-    subprocess.run(
-        sox_cmd,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    with wave.open(str(final_wav), "rb") as wf:
-        raw = wf.readframes(wf.getnframes())
-
-    return np.frombuffer(raw, dtype="int16").astype("float32") / 32768.0
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  TFLITE INFERENCE
+#  LOAD MODEL
 # ══════════════════════════════════════════════════════════════════════
 
 def load_model():
-    import numpy as np
     Interpreter = get_interpreter_class()
-
     interp = Interpreter(model_path=str(MODEL_FILE))
     interp.allocate_tensors()
+    inp = interp.get_input_details()[0]
+    out = interp.get_output_details()[0]
+    print(f"[model] Input: {inp['shape']}  Output: {out['shape']}")
+    return interp, inp["index"], out["index"]
 
-    inp_details = interp.get_input_details()
-    out_details = interp.get_output_details()
+# ══════════════════════════════════════════════════════════════════════
+#  INFERENCE
+# ══════════════════════════════════════════════════════════════════════
 
-    inp_shape = inp_details[0]["shape"]
-    print(f"[model] Input shape: {inp_shape}, Output shape: {out_details[0]['shape']}")
-
-    return interp, inp_details[0]["index"], out_details[0]["index"]
-
-
-def run_inference(interp, inp_idx: int, out_idx: int, waveform) -> float:
+def run_inference(interp, inp_idx, out_idx, waveform) -> float:
     import numpy as np
-
-    # YAMNet TFLite expects exactly 15600 samples (0.975s) or 16000 samples
-    # Trim or pad to match what the model expects
-    inp_shape    = interp.get_input_details()[0]["shape"]
-    expected_len = int(inp_shape[0])
-    n            = len(waveform)
-
-    if n >= expected_len:
-        w = waveform[:expected_len]
+    n = len(waveform)
+    if n >= MODEL_SAMPLES:
+        w = waveform[:MODEL_SAMPLES]
     else:
-        w = np.pad(waveform, (0, expected_len - n))
-
+        w = np.pad(waveform, (0, MODEL_SAMPLES - n))
     interp.set_tensor(inp_idx, w)
     interp.invoke()
-
-    scores = interp.get_tensor(out_idx)   # shape: (num_classes,) or (N, num_classes)
+    scores = interp.get_tensor(out_idx)
     if scores.ndim == 1:
         scores = scores.reshape(1, -1)
-
     mean_scores = scores.mean(axis=0)
     return float(max(
         (mean_scores[i] for i in CRY_CLASS_IDS if i < len(mean_scores)),
         default=0.0,
     ))
 
-
 # ══════════════════════════════════════════════════════════════════════
-#  DETECTION LOOP
+#  CONTINUOUS STREAMING LOOP
 # ══════════════════════════════════════════════════════════════════════
 
-def _print_banner(state: str, cry_prob: float):
-    if state == "crying":
-        print(
-            f"\n{'='*52}\n"
-            f"  BABY CRYING DETECTED   (prob={cry_prob:.3f})\n"
-            f"{'='*52}"
-        )
-    else:
-        print(
-            f"\n{'='*52}\n"
-            f"  Cry stopped / quiet    (prob={cry_prob:.3f})\n"
-            f"{'='*52}"
-        )
+def run_loop(interp, inp_idx, out_idx):
+    import numpy as np
 
+    # arecord → sox pipeline (continuous, no -d flag)
+    # arecord outputs raw S32_LE stereo 48kHz
+    # sox converts: left channel only, normalize, gain, resample to 16kHz mono 16-bit raw
+    arecord_cmd = [
+        "arecord",
+        "-D", CARD_DEVICE,
+        "-c", str(SRC_CHANNELS),
+        "-r", str(SRC_RATE),
+        "-f", "S32_LE",
+        "-t", "raw",     # raw stream, no WAV header, runs forever
+    ]
+    sox_cmd = [
+        "sox",
+        "-t", "raw", "-b", "32", "-e", "signed-integer",
+        "-r", str(SRC_RATE), "-c", str(SRC_CHANNELS), "-",   # stdin
+        "-t", "raw", "-b", "16", "-e", "signed-integer",
+        "-r", str(OUT_RATE), "-c", "1", "-",                  # stdout
+        "remix", "1",        # left channel only
+        "gain", "-n",        # normalize
+        "gain", str(GAIN_DB),
+    ]
 
-def run_loop(interp, inp_idx: int, out_idx: int):
+    print(f"\n[cry] Starting continuous stream on {CARD_DEVICE}...")
+    print(f"[cry] Threshold={CRY_PROB_THRESHOLD}  Confirm={CRY_CONFIRM_SECONDS}s  Gain={GAIN_DB}dB")
+    print(f"[cry] Sliding window every {HOP_SAMPLES/OUT_RATE:.2f}s — Ctrl+C to stop\n")
+
+    p_rec = subprocess.Popen(arecord_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    p_sox = subprocess.Popen(sox_cmd, stdin=p_rec.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    p_rec.stdout.close()  # let p_rec receive SIGPIPE if p_sox dies
+
+    bytes_per_sample = 2   # 16-bit output from sox
+    hop_bytes        = HOP_SAMPLES * bytes_per_sample
+
+    ring_buf  = np.zeros(MODEL_SAMPLES, dtype=np.float32)
+
     state       = "no_cry"
     cry_start   = None
     nocry_start = None
     elapsed     = 0.0
 
-    print(
-        f"\n[cry] Listening on {CARD_DEVICE}  "
-        f"({CHUNK_SECONDS}s chunks, threshold={CRY_PROB_THRESHOLD}) "
-        f"— Ctrl+C to stop\n"
-    )
-
-    with tempfile.TemporaryDirectory(prefix="waladi_cry_") as tmp:
-        tmp_dir = Path(tmp)
-
+    try:
         while True:
-            try:
-                waveform = capture_chunk(tmp_dir)
-            except subprocess.CalledProcessError as e:
-                print(f"\n[cry] Audio capture failed: {e} — retrying in 2s")
-                time.sleep(2)
-                continue
+            # Read one hop of audio from the continuous pipe
+            raw = b""
+            while len(raw) < hop_bytes:
+                chunk = p_sox.stdout.read(hop_bytes - len(raw))
+                if not chunk:
+                    raise RuntimeError("Audio stream ended unexpectedly.")
+                raw += chunk
 
-            cry_prob = run_inference(interp, inp_idx, out_idx, waveform)
+            hop_pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+            # Slide ring buffer: drop oldest HOP_SAMPLES, append new
+            ring_buf = np.roll(ring_buf, -HOP_SAMPLES)
+            ring_buf[-HOP_SAMPLES:] = hop_pcm
+
+            cry_prob = run_inference(interp, inp_idx, out_idx, ring_buf)
             now      = time.time()
 
+            # State machine
             if cry_prob >= CRY_PROB_THRESHOLD:
                 nocry_start = None
                 if cry_start is None:
@@ -305,7 +230,11 @@ def run_loop(interp, inp_idx: int, out_idx: int):
                 elapsed = now - cry_start
                 if state == "no_cry" and elapsed >= CRY_CONFIRM_SECONDS:
                     state = "crying"
-                    _print_banner(state, cry_prob)
+                    print(
+                        f"\n{'='*52}\n"
+                        f"  *** BABY CRYING DETECTED ***   prob={cry_prob:.3f}\n"
+                        f"{'='*52}"
+                    )
             else:
                 cry_start = None
                 if nocry_start is None:
@@ -313,19 +242,30 @@ def run_loop(interp, inp_idx: int, out_idx: int):
                 elapsed = now - nocry_start
                 if state == "crying" and elapsed >= SILENCE_CONFIRM_SECS:
                     state = "no_cry"
-                    _print_banner(state, cry_prob)
+                    print(
+                        f"\n{'='*52}\n"
+                        f"  Cry stopped / quiet            prob={cry_prob:.3f}\n"
+                        f"{'='*52}"
+                    )
 
-            bar_len = 20
-            filled  = int(min(cry_prob, 1.0) * bar_len)
+            bar_len = 25
+            filled  = int(min(cry_prob / max(CRY_PROB_THRESHOLD, 0.001), 1.0) * bar_len)
             bar     = "#" * filled + "." * (bar_len - filled)
             lbl     = "CRYING" if state == "crying" else "quiet "
+            thr_bar = "#" * bar_len  # threshold marker position = full bar
             print(
-                f"\r[{bar}] prob={cry_prob:.3f}  [{lbl}]  "
-                f"confirm={elapsed:.1f}s/{CRY_CONFIRM_SECONDS:.0f}s   ",
+                f"\r[{bar}] prob={cry_prob:.3f}  [{lbl}]  confirm={elapsed:.1f}s   ",
                 end="",
                 flush=True,
             )
 
+    except KeyboardInterrupt:
+        print("\n[cry] Stopped.")
+    except Exception as e:
+        print(f"\n[cry] Error: {e}")
+    finally:
+        p_sox.terminate()
+        p_rec.terminate()
 
 # ══════════════════════════════════════════════════════════════════════
 #  ENTRY POINT
@@ -337,18 +277,17 @@ def main():
     print("=" * 52)
 
     ensure_sox()
-    ensure_tflite_runtime()
+    ensure_tflite()
     ensure_model()
 
     print("[cry] Loading model...")
     interp, inp_idx, out_idx = load_model()
-    print("[cry] Model ready — starting detection loop")
+    print("[cry] Model ready")
 
     try:
         run_loop(interp, inp_idx, out_idx)
     except KeyboardInterrupt:
         print("\n[cry] Stopped.")
-
 
 if __name__ == "__main__":
     main()
