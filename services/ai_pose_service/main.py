@@ -76,6 +76,8 @@ def main():
         ),
         risk_detection=RiskDetectionConfig(
             normal_fps=target_fps,
+            risk_threshold=0.50,          # nose confidence below this = risky
+            consecutive_risk_frames=2,    # 2 consecutive frames needed (was 5)
         ),
         blanket_detection=BlanketDetectionConfig(),
         sleep_detection=SleepDetectionConfig(
