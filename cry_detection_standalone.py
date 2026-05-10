@@ -174,15 +174,18 @@ def run_loop(interp, inp_idx, out_idx):
         "-f", "S32_LE",
         "-t", "raw",     # raw stream, no WAV header, runs forever
     ]
+    # NOTE: gain -n (normalize) is NOT used — it requires reading the full
+    # file to find the peak, so it buffers forever on an infinite stream.
     sox_cmd = [
+        "stdbuf", "-o0",          # disable sox output buffering
         "sox",
+        "--buffer", "1024",       # small input buffer = low latency
         "-t", "raw", "-b", "32", "-e", "signed-integer",
         "-r", str(SRC_RATE), "-c", str(SRC_CHANNELS), "-",   # stdin
         "-t", "raw", "-b", "16", "-e", "signed-integer",
-        "-r", str(OUT_RATE), "-c", "1", "-",                  # stdout
-        "remix", "1",        # left channel only
-        "gain", "-n",        # normalize
-        "gain", str(GAIN_DB),
+        "-r", str(OUT_RATE), "-c", "1", "-",                  # stdout raw
+        "remix", "1",             # left channel only
+        "gain", str(GAIN_DB),     # fixed gain only, no -n normalize
     ]
 
     print(f"\n[cry] Starting continuous stream on {CARD_DEVICE}...")
