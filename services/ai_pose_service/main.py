@@ -155,9 +155,12 @@ def main():
     frame_source, cleanup, source_type = build_frame_source(_FakeArgs(), config)
     config.source_type = source_type
 
+    import io, contextlib
     try:
         print(f"[ai_pose] pipeline starting — camera: {ai_cfg['camera_url']}")
-        run_pipeline(frame_source, config, on_result=on_result)
+        # Suppress internal pipeline prints ([WARNING], [INFO], [BLANKET] etc.)
+        with contextlib.redirect_stdout(io.StringIO()):
+            run_pipeline(frame_source, config, on_result=on_result)
     except KeyboardInterrupt:
         print("[ai_pose] stopped.")
     finally:

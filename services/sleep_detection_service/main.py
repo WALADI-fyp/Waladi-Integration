@@ -127,8 +127,16 @@ def fetch_snapshot(url: str) -> "np.ndarray | None":
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = resp.read()
-        arr = np.frombuffer(data, dtype=np.uint8)
+        arr   = np.frombuffer(data, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return None
+        # Resize to max 640px wide — YuNet works on 320x320 patches,
+        # the full 2304×1296 makes faces appear tiny and undetectable
+        h, w = frame.shape[:2]
+        if w > 640:
+            scale = 640 / w
+            frame = cv2.resize(frame, (640, int(h * scale)))
         return frame
     except Exception:
         return None
