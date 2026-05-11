@@ -223,7 +223,7 @@ def main():
             h2, w2 = frame.shape[:2]
             if face is not None:
                 x, y, fw_, fh_ = face
-                print(f"[sleep] frame={w2}x{h2} bbox=({x},{y},{fw_},{fh_}) flag={round(face_flag,3)}")
+                print(f"[sleep] frame={w2}x{h2} bbox=({x},{y},{fw_},{fh_}) ear={round(ear,3) if ear else 'pending'}")
             else:
                 print(f"[sleep] frame={w2}x{h2} face=not detected")
             if face is not None:
@@ -237,7 +237,7 @@ def main():
 
                 lm, flag = run_landmarker(interp, in_d, out_d, lm_idx, flag_idx, crop)
 
-                if lm is not None and flag >= LANDMARK_MIN_FLAG:
+                if lm is not None:  # skip flag check — raw model flag is unreliable without pre-alignment
                     lm[:, 0] += x1
                     lm[:, 1] += y1
 
