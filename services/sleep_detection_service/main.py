@@ -38,7 +38,7 @@ LANDMARK_PATH = str(MODELS_DIR / "face_landmark.tflite")
 POLL_INTERVAL_S       = 0.5     # how often to grab a snapshot
 LANDMARK_INPUT_SIZE   = 192
 LANDMARK_FACE_PADDING = 0.25
-LANDMARK_MIN_FLAG     = 0.5
+LANDMARK_MIN_FLAG     = 0.1   # lowered — TFLite model flag is often low on Pi
 EAR_CLOSED_THRESHOLD  = 0.21
 CLOSED_SECONDS_THRESHOLD = 10.0  # eyes closed this long → asleep
 OPEN_CONFIRM_SECONDS  = 0.5      # eyes open this long → awake
@@ -217,10 +217,11 @@ def main():
             h, w = frame.shape[:2]
             eyes_closed = False
             ear         = None
+            face_flag   = 0.0
 
             face = detect_face(yunet, frame)
             h2, w2 = frame.shape[:2]
-            print(f"[sleep] frame={w2}x{h2} face={'detected' if face else 'not detected'} ear={round(ear,3) if ear else None}")
+            print(f"[sleep] frame={w2}x{h2} face={'detected' if face else 'not detected'} flag={round(face_flag,3) if face else '-'} ear={round(ear,3) if ear else None}")
             if face is not None:
                 x, y, fw_, fh_ = face
                 pad = int(LANDMARK_FACE_PADDING * min(fw_, fh_))
