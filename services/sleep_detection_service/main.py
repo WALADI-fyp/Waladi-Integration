@@ -221,7 +221,11 @@ def main():
 
             face = detect_face(yunet, frame)
             h2, w2 = frame.shape[:2]
-            print(f"[sleep] frame={w2}x{h2} face={'detected' if face else 'not detected'} flag={round(face_flag,3) if face else '-'} ear={round(ear,3) if ear else None}")
+            if face is not None:
+                x, y, fw_, fh_ = face
+                print(f"[sleep] frame={w2}x{h2} bbox=({x},{y},{fw_},{fh_}) flag={round(face_flag,3)}")
+            else:
+                print(f"[sleep] frame={w2}x{h2} face=not detected")
             if face is not None:
                 x, y, fw_, fh_ = face
                 pad = int(LANDMARK_FACE_PADDING * min(fw_, fh_))
