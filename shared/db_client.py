@@ -142,3 +142,67 @@ class DbClient:
                     source,
                 ),
             )
+
+    # ──────────────────────────────────────────────
+    #  Cry alerts
+    # ──────────────────────────────────────────────
+
+    def init_cry_alerts_table(self):
+        """
+        Creates the cry_alerts table if it doesn't exist.
+        Safe to call on every startup.
+        """
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cry_alerts (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     TEXT NOT NULL,
+                    device_id   TEXT NOT NULL,
+                    started_at  TIMESTAMPTZ NOT NULL,
+                    ended_at    TIMESTAMPTZ,
+                    duration_s  DOUBLE PRECISION
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cry_alerts_user
+                ON cry_alerts (user_id, started_at DESC)
+            """)
+        print("[DB] cry_alerts table ready")
+
+    def insert_cry_alert_start(self, *, user_id: str, device_id: str, started_at_ms: int) -> int:
+        """
+        Insert a new crying alert with no end time yet.
+        Returns the alert id so we can close it later.
+        """
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cry_alerts (user_id, device_id, started_at)
+                VALUES (%s, %s, to_timestamp(%s / 1000.0))
+                RETURNING id
+                """,
+                (user_id, device_id, started_at_ms),
+            )
+            row = cur.fetchone()
+            return row[0]
+
+    def update_cry_alert_end(self, *, alert_id: int, ended_at_ms: int):
+        """
+        Close an open alert by setting ended_at and computing duration_s.
+        """
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE cry_alerts
+                SET
+                    ended_at   = to_timestamp(%s / 1000.0),
+                    duration_s = EXTRACT(EPOCH FROM (
+                                     to_timestamp(%s / 1000.0) - started_at
+                                 ))
+                WHERE id = %s
+                """,
+                (ended_at_ms, ended_at_ms, alert_id),
+            )

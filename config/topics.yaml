@@ -5,3 +5,4 @@ topics:
   camera_snapshot: "camera/snapshot"
   thermal_hotspot: "waladi/sensors/thermal_hotspot"
   ai_pose: "waladi/ai/pose"
+  cry_alert: "waladi/alerts/cry"
