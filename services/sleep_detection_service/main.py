@@ -219,6 +219,8 @@ def main():
             ear         = None
 
             face = detect_face(yunet, frame)
+            h2, w2 = frame.shape[:2]
+            print(f"[sleep] frame={w2}x{h2} face={'detected' if face else 'not detected'} ear={round(ear,3) if ear else None}")
             if face is not None:
                 x, y, fw_, fh_ = face
                 pad = int(LANDMARK_FACE_PADDING * min(fw_, fh_))
