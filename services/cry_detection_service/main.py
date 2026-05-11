@@ -255,15 +255,7 @@ def run_loop(*, interp, inp_idx: int, out_idx: int,
                         },
                     ))
 
-            # ── Status line ────────────────────────────────────────────────
-            bar_len = 25
-            filled  = int(min(cry_prob / max(threshold, 0.001), 1.0) * bar_len)
-            bar     = "#" * filled + "." * (bar_len - filled)
-            lbl     = "CRYING" if state == "crying" else "quiet "
-            print(
-                f"\r[{bar}] prob={cry_prob:.3f}  [{lbl}]  confirm={elapsed:.1f}s   ",
-                end="", flush=True,
-            )
+
 
     except KeyboardInterrupt:
         pass

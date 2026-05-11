@@ -56,7 +56,7 @@ def main():
                 }
 
             except Exception as e:
-                print(f"[mmwave_vitals_service] sensor read failed: {e}")
+                print(f"[mmwave] ERROR: {e}")
                 data = {
                     "breathing_rate_bpm": counter,
                     "heart_rate_bpm":     counter,
@@ -67,7 +67,6 @@ def main():
 
             msg = make_message(source="mmwave_vitals_service", data=data)
             client.publish_json(vitals_topic, msg, qos=1, retain=False)
-            print(f"[mmwave_vitals_service] published -> {vitals_topic}: {msg}")
 
             time.sleep(1.0)
 

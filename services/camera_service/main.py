@@ -259,7 +259,7 @@ def video():
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="error")
 
 
 if __name__ == "__main__":
