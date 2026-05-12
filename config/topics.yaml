@@ -6,3 +6,4 @@ topics:
   thermal_hotspot: "waladi/sensors/thermal_hotspot"
   ai_pose: "waladi/ai/pose"
   cry_alert: "waladi/alerts/cry"
+  sleep_state: "waladi/ai/sleep"

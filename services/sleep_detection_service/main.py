@@ -13,6 +13,10 @@ import time
 import urllib.request
 from pathlib import Path
 
+from config.device import get_device_id
+from shared.message import make_message, now_ms
+from shared.mqtt_client import MqttClient
+
 import cv2
 import numpy as np
 import yaml
@@ -35,6 +39,7 @@ ROTATIONS = {
 EAR_CLOSED_THRESHOLD     = 0.32
 CLOSED_SECONDS_THRESHOLD = 3.0
 OPEN_CONFIRM_SECONDS     = 0.5
+PATIENCE_FRAMES          = 3    # consecutive frames needed before acting
 LANDMARK_INPUT_SIZE      = 192
 LANDMARK_FACE_PADDING    = 0.30
 
@@ -158,8 +163,23 @@ def run_landmarker(interp, in_d, out_d, lm_idx, crop_bgr):
 def main():
     ai_cfg     = load_yaml("config/ai.yaml")["ai"]
     audio_cfg  = load_yaml("config/audio.yaml").get("audio", {})
+    mqtt_cfg   = load_yaml("config/mqtt.yaml")
+    topics     = load_yaml("config/topics.yaml")["topics"]
     camera_url = ai_cfg.get("camera_url", "http://localhost:8001/snapshot")
     rotation   = int(audio_cfg.get("frame_rotation", 0))
+    device_id  = get_device_id()
+    sleep_topic = topics["sleep_state"]
+
+    mqtt = MqttClient(
+        client_id=f"sleep_detection_{device_id}",
+        host=mqtt_cfg["broker"]["host"],
+        port=mqtt_cfg["broker"]["port"],
+        keepalive=mqtt_cfg["client"]["keepalive"],
+        username=mqtt_cfg["broker"].get("username"),
+        password=mqtt_cfg["broker"].get("password"),
+        tls=mqtt_cfg["broker"].get("tls", False),
+    )
+    mqtt.connect()
 
     print(f"[sleep] starting — camera: {camera_url}")
 
@@ -168,9 +188,11 @@ def main():
 
     print("[sleep] ready — monitoring eye state")
 
-    baby_state         = "awake"
-    closed_start_time  = None
-    open_confirm_start = None
+    baby_state           = "awake"
+    closed_start_time    = None
+    open_confirm_start   = None
+    _consec_closed       = 0    # consecutive closed frames
+    _consec_open         = 0    # consecutive open frames
     frame_count        = 0
 
     while True:
@@ -234,20 +256,37 @@ def main():
             else:
                 print(f"[sleep] no face detected  state={baby_state}")
 
-            # ── State machine ─────────────────────────────────────────────
+            # ── State machine with patience ───────────────────────────────
             t = time.time()
 
             if eyes_closed:
+                _consec_closed += 1
+                _consec_open    = 0
                 open_confirm_start = None
-                if closed_start_time is None:
-                    closed_start_time = t
-                closed_dur = t - closed_start_time
-                if baby_state == "awake" and closed_dur >= CLOSED_SECONDS_THRESHOLD:
-                    baby_state = "asleep"
-                    print(f"[sleep] Baby fell asleep  (EAR={ear:.3f})")
+                # Only start/continue closed timer after PATIENCE_FRAMES consecutive closed
+                if _consec_closed >= PATIENCE_FRAMES:
+                    if closed_start_time is None:
+                        closed_start_time = t
+                    closed_dur = t - closed_start_time
+                    if baby_state == "awake" and closed_dur >= CLOSED_SECONDS_THRESHOLD:
+                        baby_state = "asleep"
+                        print(f"[sleep] Baby fell asleep  (EAR={ear:.3f})")
+                        mqtt.publish_json(sleep_topic, make_message(
+                            source="sleep_detection_service",
+                            data={
+                                "device_id":  device_id,
+                                "baby_state": "asleep",
+                                "event":      "baby_fell_asleep",
+                                "ear":        round(ear, 3),
+                            },
+                        ))
             else:
-                closed_start_time = None
-                if baby_state == "asleep":
+                _consec_open   += 1
+                _consec_closed  = 0
+                # Only reset closed timer after PATIENCE_FRAMES consecutive open frames
+                if _consec_open >= PATIENCE_FRAMES:
+                    closed_start_time = None
+                if baby_state == "asleep" and _consec_open >= PATIENCE_FRAMES:
                     if open_confirm_start is None:
                         open_confirm_start = t
                     if (t - open_confirm_start) >= OPEN_CONFIRM_SECONDS:
@@ -255,6 +294,15 @@ def main():
                         open_confirm_start = None
                         ear_str = f"{ear:.3f}" if ear is not None else "N/A"
                         print(f"[sleep] Baby woke up  (EAR={ear_str})")
+                        mqtt.publish_json(sleep_topic, make_message(
+                            source="sleep_detection_service",
+                            data={
+                                "device_id":  device_id,
+                                "baby_state": "awake",
+                                "event":      "baby_woke_up",
+                                "ear":        round(ear, 3) if ear else None,
+                            },
+                        ))
 
         except Exception as e:
             print(f"[sleep] ERROR: {e}")
