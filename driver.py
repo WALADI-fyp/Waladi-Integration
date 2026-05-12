@@ -2,6 +2,7 @@ import subprocess
 import sys
 import signal
 import os
+import time
 
 SERVICES = [
     "services.sht31_service.main",
@@ -12,6 +13,7 @@ SERVICES = [
     "services.thermal_camera_service.main",
     "services.ai_pose_service.main",
     "services.cry_detection_service.main",
+    "services.sleep_detection_service.main",
 ]
 
 processes = []
@@ -39,14 +41,14 @@ if __name__ == "__main__":
         processes.append(p)
         print(f"[driver] started {service} (pid={p.pid})")
 
-    print("[driver] all services running")
-    print("[driver]   camera snapshot → http://<pi-ip>:8001/snapshot")
-    print("[driver]   data flowing via EMQX MQTT broker")
-    print("[driver] press Ctrl+C to stop\n")
+    print("\n[driver] all services running — only errors and key events will print\n")
 
     while True:
         for p in processes:
             if p.poll() is not None:
-                print(f"[driver] a service exited unexpectedly (pid={p.pid}), shutting down")
+                # Find which service crashed
+                idx = processes.index(p)
+                name = SERVICES[idx] if idx < len(SERVICES) else "unknown"
+                print(f"[driver] ERROR: {name} exited unexpectedly (pid={p.pid}), shutting down")
                 shutdown(None, None)
-        import time; time.sleep(1)
+        time.sleep(1)

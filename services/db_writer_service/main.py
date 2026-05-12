@@ -81,7 +81,6 @@ def main():
                 mock_fields=data.get("mock_fields", []),
                 source=source,
             )
-            print(f"[db_writer] ✓ wrote reading to TimescaleDB (ts={ts_ms})")
 
         except Exception as e:
             print(f"[db_writer] ✗ insert failed: {e}")
