@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from config.device import get_device_id
+from shared.db_client import DbClient
 from shared.message import make_message, now_ms
 from shared.mqtt_client import MqttClient
 
@@ -171,6 +172,25 @@ def main():
     device_id  = get_device_id()
     sleep_topic = topics["sleep_state"]
 
+    db_cfg = load_yaml("config/db.yaml")["timescale"]
+    db = DbClient(
+        host=db_cfg["host"], port=db_cfg["port"],
+        dbname=db_cfg["dbname"], user=db_cfg["user"],
+        password=db_cfg["password"], sslmode=db_cfg.get("sslmode", "require"),
+    )
+    db.connect()
+    _user_id = "unassigned"
+    for attempt in range(3):
+        try:
+            uid = db.get_user_id(device_id)
+            if uid:
+                _user_id = uid
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    print(f"[sleep] DB ready — user_id={_user_id}")
+
     mqtt = MqttClient(
         client_id=f"sleep_detection_{device_id}",
         host=mqtt_cfg["broker"]["host"],
@@ -192,8 +212,9 @@ def main():
     baby_state           = "awake"
     closed_start_time    = None
     open_confirm_start   = None
-    _consec_closed       = 0    # consecutive closed frames
-    _consec_open         = 0    # consecutive open frames
+    _consec_closed       = 0
+    _consec_open         = 0
+    _sleep_alert_id      = None  # DB row id for open sleep alert
     frame_count        = 0
 
     while True:
@@ -276,6 +297,14 @@ def main():
                     if baby_state == "awake" and closed_dur >= CLOSED_SECONDS_THRESHOLD:
                         baby_state = "asleep"
                         print(f"[sleep] Baby fell asleep  (EAR={ear:.3f})")
+                        try:
+                            _sleep_alert_id = db.insert_sleep_alert_start(
+                                user_id=_user_id, device_id=device_id,
+                                started_at_ms=now_ms(), ear_start=round(ear, 3),
+                            )
+                        except Exception as _e:
+                            print(f"[sleep] DB insert failed: {_e}")
+                            _sleep_alert_id = None
                         mqtt.publish_json(sleep_topic, make_message(
                             source="sleep_detection_service",
                             data={
@@ -299,6 +328,16 @@ def main():
                         open_confirm_start = None
                         ear_str = f"{ear:.3f}" if ear is not None else "N/A"
                         print(f"[sleep] Baby woke up  (EAR={ear_str})")
+                        if _sleep_alert_id is not None:
+                            try:
+                                db.update_sleep_alert_end(
+                                    alert_id=_sleep_alert_id,
+                                    ended_at_ms=now_ms(),
+                                    ear_end=round(ear, 3) if ear else 0.0,
+                                )
+                            except Exception as _e:
+                                print(f"[sleep] DB update failed: {_e}")
+                            _sleep_alert_id = None
                         mqtt.publish_json(sleep_topic, make_message(
                             source="sleep_detection_service",
                             data={

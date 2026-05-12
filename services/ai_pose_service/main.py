@@ -19,8 +19,9 @@ import numpy as np
 import cv2
 
 from config.device import get_device_id
+from shared.db_client import DbClient
 from shared.mqtt_client import MqttClient
-from shared.message import make_message
+from shared.message import make_message, now_ms
 
 # Add project root to path so the standalone script can import cleanly
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -88,6 +89,26 @@ def main():
             mode=ai_cfg.get("source_mode", "snapshot"),
         ),
     )
+
+    # ── DB setup ──────────────────────────────────────────────────────────────
+    db_cfg = load_yaml("config/db.yaml")["timescale"]
+    db = DbClient(
+        host=db_cfg["host"], port=db_cfg["port"],
+        dbname=db_cfg["dbname"], user=db_cfg["user"],
+        password=db_cfg["password"], sslmode=db_cfg.get("sslmode", "require"),
+    )
+    db.connect()
+    _user_id = "unassigned"
+    for attempt in range(3):
+        try:
+            uid = db.get_user_id(device_id)
+            if uid:
+                _user_id = uid
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    print(f"[ai_pose] DB ready — user_id={_user_id}")
 
     # ── Load rotation config (same as sleep service) ──────────────────────────
     try:
@@ -222,6 +243,16 @@ def main():
                         f"face={face_found} eyes={eyes_visible} "
                         f"(both signals failed)"
                     )
+                    try:
+                        db.insert_risky_posture_alert(
+                            user_id=_user_id, device_id=device_id,
+                            detected_at_ms=now_ms(),
+                            nose_confidence=round(nose_conf, 3),
+                            face_found=face_found,
+                            eyes_visible=eyes_visible,
+                        )
+                    except Exception as e:
+                        print(f"[ai_pose] DB insert failed: {e}")
                 _risky_state = True
 
         payload = make_message(
