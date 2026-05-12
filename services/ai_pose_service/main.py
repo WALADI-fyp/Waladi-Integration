@@ -168,32 +168,34 @@ def main():
         face_found   = fa["face_found"]
         eyes_visible = fa["eyes_visible"]   # 0, 1, or 2
 
-        # Safety logic:
-        #   2 eyes visible → clearly face-up → SAFE
-        #   1 eye visible  → partially turned → treat as SAFE (face still up)
-        #   0 eyes + face  → face detected but eyes buried → RISKY
-        #   no face        → face-down or out of frame → RISKY
-        frame_safe = eyes_visible >= 1
+        # Combined safety logic — SAFE if EITHER signal confirms face is up:
+        #   nose_safe: YOLO nose confidence is high → nose clearly visible
+        #   face_safe: YuNet sees a face AND at least 1 eye is visible
+        # RISKY only when BOTH signals fail simultaneously.
+        NOSE_CONF_SAFE = 0.50
+        nose_safe = nose_conf >= NOSE_CONF_SAFE
+        face_safe = face_found and eyes_visible >= 1
+        frame_safe = nose_safe or face_safe
 
         if frame_safe:
             _unsafe_frame_count = 0
             _safe_frame_count  += 1
             if _safe_frame_count >= CONFIRM_FRAMES:
                 if _risky_state:
-                    print(
-                        f"[ai_pose] SAFE — {eyes_visible} eye(s) visible "
-                        f"nose_conf={nose_conf:.3f}"
-                    )
+                    reason = []
+                    if nose_safe: reason.append(f"nose_conf={nose_conf:.3f}")
+                    if face_safe: reason.append(f"{eyes_visible} eye(s) visible")
+                    print(f"[ai_pose] SAFE — {' + '.join(reason)}")
                 _risky_state = False
         else:
             _safe_frame_count   = 0
             _unsafe_frame_count += 1
             if _unsafe_frame_count >= CONFIRM_FRAMES:
                 if not _risky_state:
-                    reason = "no face" if not face_found else "face found but no eyes visible"
                     print(
-                        f"[ai_pose] RISKY — {reason} "
-                        f"nose_conf={nose_conf:.3f}"
+                        f"[ai_pose] RISKY — nose_conf={nose_conf:.3f} "
+                        f"face={face_found} eyes={eyes_visible} "
+                        f"(both signals failed)"
                     )
                 _risky_state = True
 
@@ -216,11 +218,13 @@ def main():
         client.publish_json(pose_topic, payload, qos=1, retain=False)
 
         # Console — every frame
-        status = "RISKY" if _risky_state else "SAFE "
+        status    = "RISKY" if _risky_state else "SAFE "
+        nose_ok   = "✓" if nose_conf >= 0.50 else "✗"
+        face_ok   = "✓" if face_safe else "✗"
         print(
             f"[ai_pose] {status} | "
-            f"face={face_found} eyes={eyes_visible} "
-            f"nose_conf={nose_conf:.3f} "
+            f"nose={nose_conf:.3f}{nose_ok} "
+            f"face={face_found}{face_ok} eyes={eyes_visible} | "
             f"unsafe={_unsafe_frame_count} safe={_safe_frame_count}"
         )
     # ── Build frame source and run ─────────────────────────────────────────────
