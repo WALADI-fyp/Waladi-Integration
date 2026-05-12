@@ -60,7 +60,6 @@ def main():
 
             msg = make_message(source="thermal_camera_service", data=data)
             client.publish_json(topic, msg, qos=1, retain=False)
-            print(f"[thermal] published -> max={data.get('max_temp_c')}C")
             time.sleep(0.25)
 
     finally:

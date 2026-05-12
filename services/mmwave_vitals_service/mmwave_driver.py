@@ -57,7 +57,6 @@ class MmwaveVitalsSensor:
             if not line:
                 continue
 
-            print(f"[mmwave] RAW: {line}")
 
             m = breath_re.search(line)
             if m:

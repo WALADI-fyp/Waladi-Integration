@@ -56,7 +56,6 @@ def main():
             "humidity_rh": data.get("humidity_rh"),
             "mock": data.get("mock", True),
         }
-        print(f"[fusion] env update: {latest_env}")
 
     def vitals_callback(topic: str, msg: dict):
         nonlocal latest_vitals
@@ -66,7 +65,6 @@ def main():
             "heart_rate_bpm": data.get("heart_rate_bpm"),
             "mock": data.get("mock", True),
         }
-        print(f"[fusion] vitals update: {latest_vitals}")
 
     def thermal_callback(topic: str, msg: dict):
         nonlocal latest_thermal
@@ -75,7 +73,6 @@ def main():
             "body_temperature_c": data.get("max_temp_c"),
             "mock": data.get("mock", True),
         }
-        print(f"[fusion] thermal update: {latest_thermal}")
 
     client.subscribe(sht_topic,     env_callback,     qos=1)
     client.subscribe(vitals_topic,  vitals_callback,  qos=1)
@@ -113,7 +110,6 @@ def main():
             )
 
             client.publish_json(state_topic, state, qos=1, retain=True)
-            print(f"[fusion] published -> {state_topic}: {state}")
 
             counter += 1
             time.sleep(1.0)

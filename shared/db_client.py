@@ -206,3 +206,177 @@ class DbClient:
                 """,
                 (ended_at_ms, ended_at_ms, alert_id),
             )
+
+    # ──────────────────────────────────────────────
+    #  Risky posture alerts
+    # ──────────────────────────────────────────────
+
+    def insert_risky_posture_alert(self, *, user_id: str, device_id: str,
+                                    detected_at_ms: int, nose_confidence: float,
+                                    face_found: bool, eyes_visible: int) -> int:
+        import uuid as _uuid
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO risky_posture_alerts
+                    (alert_id, user_id, device_id, detected_at,
+                     nose_confidence, face_found, eyes_visible)
+                VALUES (%s, %s, %s, to_timestamp(%s / 1000.0), %s, %s, %s)
+                RETURNING id
+            """, (str(_uuid.uuid4()), user_id, device_id, detected_at_ms,
+                  nose_confidence, face_found, eyes_visible))
+            return cur.fetchone()[0]
+
+    # ──────────────────────────────────────────────
+    #  Sleep alerts
+    # ──────────────────────────────────────────────
+
+    def insert_sleep_alert_start(self, *, user_id: str, device_id: str,
+                                  started_at_ms: int, ear_start: float) -> int:
+        import uuid as _uuid
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO sleep_alerts
+                    (alert_id, user_id, device_id, started_at, ear_start)
+                VALUES (%s, %s, %s, to_timestamp(%s / 1000.0), %s)
+                RETURNING id
+            """, (str(_uuid.uuid4()), user_id, device_id, started_at_ms, ear_start))
+            return cur.fetchone()[0]
+
+    def update_sleep_alert_end(self, *, alert_id: int, ended_at_ms: int, ear_end: float):
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                UPDATE sleep_alerts
+                SET
+                    ended_at   = to_timestamp(%s / 1000.0),
+                    ear_end    = %s,
+                    duration_s = EXTRACT(EPOCH FROM (
+                                     to_timestamp(%s / 1000.0) - started_at
+                                 )),
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (ended_at_ms, ear_end, ended_at_ms, alert_id))
+
+    # ──────────────────────────────────────────────
+    #  Temperature alerts
+    # ──────────────────────────────────────────────
+
+    def init_temperature_alerts_table(self):
+        """
+        Creates/migrates temperature_alerts for event-based temperature alerts.
+        Safe to call on every startup. If an older start/end style table exists,
+        it keeps the table but relaxes old required columns so event inserts work.
+        """
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS temperature_alerts (
+                    id             SERIAL PRIMARY KEY,
+                    user_id        TEXT NOT NULL,
+                    device_id      TEXT NOT NULL,
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    temperature_c  DOUBLE PRECISION NOT NULL,
+                    severity       TEXT NOT NULL
+                )
+            """)
+
+            # If the old start/end temperature table exists, add the new columns.
+            cur.execute("""
+                ALTER TABLE temperature_alerts
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
+            """)
+            cur.execute("""
+                ALTER TABLE temperature_alerts
+                ADD COLUMN IF NOT EXISTS temperature_c DOUBLE PRECISION
+            """)
+            cur.execute("""
+                ALTER TABLE temperature_alerts
+                ADD COLUMN IF NOT EXISTS severity TEXT
+            """)
+
+            # Existing old columns such as started_at/temp_start_c may be NOT NULL.
+            # Drop NOT NULL on columns no longer used by event-based temp alerts.
+            cur.execute("""
+                DO $$
+                DECLARE col_name TEXT;
+                BEGIN
+                    FOREACH col_name IN ARRAY ARRAY[
+                        'alert_id', 'started_at', 'ended_at', 'duration_s',
+                        'temp_start_c', 'temp_peak_c', 'temp_end_c', 'updated_at'
+                    ]
+                    LOOP
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'temperature_alerts'
+                              AND column_name = col_name
+                        ) THEN
+                            EXECUTE format(
+                                'ALTER TABLE temperature_alerts ALTER COLUMN %I DROP NOT NULL',
+                                col_name
+                            );
+                        END IF;
+                    END LOOP;
+                END $$
+            """)
+
+            cur.execute("""
+                UPDATE temperature_alerts
+                SET created_at = COALESCE(created_at, NOW())
+                WHERE created_at IS NULL
+            """)
+
+            # Remove older severity CHECK constraints, then install the event-based one.
+            cur.execute("""
+                DO $$
+                DECLARE constraint_name TEXT;
+                BEGIN
+                    FOR constraint_name IN
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'temperature_alerts'::regclass
+                          AND contype = 'c'
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE temperature_alerts DROP CONSTRAINT IF EXISTS %I',
+                            constraint_name
+                        );
+                    END LOOP;
+                END $$
+            """)
+            cur.execute("""
+                ALTER TABLE temperature_alerts
+                ADD CONSTRAINT temperature_alerts_severity_check
+                CHECK (severity IN ('normal_high', 'moderately_high', 'severe'))
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_temperature_alerts_user_created_at
+                ON temperature_alerts (user_id, created_at DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_temperature_alerts_device_created_at
+                ON temperature_alerts (device_id, created_at DESC)
+            """)
+
+        print("[DB] temperature_alerts table ready")
+
+    def insert_temperature_alert(self, *, user_id: str, device_id: str,
+                                 created_at_ms: int, temperature_c: float,
+                                 severity: str) -> int:
+        """Insert one event-based temperature alert and return its row id."""
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO temperature_alerts
+                    (user_id, device_id, created_at, temperature_c, severity)
+                VALUES (%s, %s, to_timestamp(%s / 1000.0), %s, %s)
+                RETURNING id
+                """,
+                (user_id, device_id, created_at_ms, temperature_c, severity),
+            )
+            row = cur.fetchone()
+            return row[0]
+
