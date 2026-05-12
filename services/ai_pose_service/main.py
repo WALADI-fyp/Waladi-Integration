@@ -221,10 +221,12 @@ def main():
         status    = "RISKY" if _risky_state else "SAFE "
         nose_ok   = "✓" if nose_conf >= 0.50 else "✗"
         face_ok   = "✓" if face_safe else "✗"
+        frame_info = f"{_frame.shape}" if _frame is not None else "None"
         print(
             f"[ai_pose] {status} | "
             f"nose={nose_conf:.3f}{nose_ok} "
             f"face={face_found}{face_ok} eyes={eyes_visible} | "
+            f"frame={frame_info} | "
             f"unsafe={_unsafe_frame_count} safe={_safe_frame_count}"
         )
     # ── Build frame source and run ─────────────────────────────────────────────
