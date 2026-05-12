@@ -1,0 +1,5 @@
+mqtt_snapshots:
+  enabled: true
+  interval_sec: 2.0
+  max_width: 640
+  jpeg_quality: 60

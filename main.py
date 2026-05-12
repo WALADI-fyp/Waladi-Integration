@@ -1,0 +1,10 @@
+topics:
+  sht31_env: "sensors/sht31/env"
+  vital_signs: "sensors/mmwave/vitals"
+  baby_state: "state/baby"
+  camera_snapshot: "camera/snapshot"
+  thermal_hotspot: "waladi/sensors/thermal_hotspot"
+  ai_pose: "waladi/ai/pose"
+  cry_alert: "waladi/alerts/cry"
+  sleep_state: "waladi/ai/sleep"
+  temperature_alert: "waladi/alerts/temperature"
