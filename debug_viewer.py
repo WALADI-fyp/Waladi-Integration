@@ -28,7 +28,7 @@ LANDMARK_PATH = "services/sleep_detection_service/models/face_landmark.tflite"
 AUDIO_CFG     = "config/audio.yaml"
 POSE_FRAME    = "/tmp/waladi_pose_frame.jpg"
 
-EAR_CLOSED_THRESHOLD  = 0.30
+EAR_CLOSED_THRESHOLD  = 0.32
 LEFT_EYE_IDX          = [33,  160, 158, 133, 153, 144]
 RIGHT_EYE_IDX         = [362, 385, 387, 263, 373, 380]
 LANDMARK_INPUT_SIZE   = 192
@@ -190,7 +190,7 @@ def add_status_bar(vis, label, face_found, eyes_visible, ear, extra=""):
     cv2.rectangle(vis, (0, h-85), (w, h), (0,0,0), -1)
     put_text(vis, label, (8, h-65), (100,200,255), 0.6, 2)
     ear_str = f"{ear:.3f}" if ear is not None else "N/A"
-    closed  = ear is not None and ear < EAR_CLOSED_THRESHOLD
+    closed  = ear is not None and ear > EAR_CLOSED_THRESHOLD  # inverted due to rotation
     put_text(vis, f"EAR: {ear_str} ({'CLOSED' if closed else 'open'})",
              (8, h-42), (255,255,255), 0.5, 1)
     put_text(vis, f"Face: {'YES' if face_found else 'NO'}  {eyes_visible}/2 eyes  {extra}",
