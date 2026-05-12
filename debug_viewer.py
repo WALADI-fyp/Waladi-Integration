@@ -172,6 +172,9 @@ def analyse_frame(yunet, interp, in_d, out_d, lm_idx, frame):
         x2   = min(w, fx + fw_ + pad)
         y2   = min(h, fy + fh_ + pad)
         crop = frame[y1:y2, x1:x2]
+        # Upscale crop for better landmark accuracy at any camera distance
+        if crop.shape[0] > 5 and crop.shape[1] > 5:
+            crop = cv2.resize(crop, (300, 300))
         lm   = run_landmarker(interp, in_d, out_d, lm_idx, crop)
 
         if lm is not None:

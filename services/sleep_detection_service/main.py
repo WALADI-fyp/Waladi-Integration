@@ -41,6 +41,7 @@ CLOSED_SECONDS_THRESHOLD = 3.0
 OPEN_CONFIRM_SECONDS     = 0.5
 PATIENCE_FRAMES          = 3    # consecutive frames needed before acting
 LANDMARK_INPUT_SIZE      = 192
+FACE_CROP_SIZE           = 300  # upscale face crop to this before landmark inference
 LANDMARK_FACE_PADDING    = 0.30
 
 LEFT_EYE_IDX  = [33,  160, 158, 133, 153, 144]
@@ -228,19 +229,23 @@ def main():
                 y2  = min(h, fy + fh_ + pad)
                 crop = frame[y1:y2, x1:x2]
 
+                # Upscale crop to fixed size — gives landmark model more pixels
+                # regardless of how far the camera is from the baby
+                if crop.shape[0] > 5 and crop.shape[1] > 5:
+                    crop_in = cv2.resize(crop, (FACE_CROP_SIZE, FACE_CROP_SIZE))
+                else:
+                    crop_in = crop
+
                 # ── Landmark inference ────────────────────────────────────
-                lm = run_landmarker(interp, in_d, out_d, lm_idx, crop)
+                # EAR computed in crop_in space — EAR is a ratio so scale
+                # doesn't matter, no need to map back to full frame coords
+                lm = run_landmarker(interp, in_d, out_d, lm_idx, crop_in)
 
                 if lm is not None:
-                    # Shift landmark coords from crop space to full frame
-                    lm_full = lm.copy()
-                    lm_full[:, 0] += x1
-                    lm_full[:, 1] += y1
-
-                    left_ear  = eye_aspect_ratio(lm_full[LEFT_EYE_IDX])
-                    right_ear = eye_aspect_ratio(lm_full[RIGHT_EYE_IDX])
+                    left_ear  = eye_aspect_ratio(lm[LEFT_EYE_IDX])
+                    right_ear = eye_aspect_ratio(lm[RIGHT_EYE_IDX])
                     ear       = (left_ear + right_ear) / 2.0
-                    eyes_closed = ear > EAR_CLOSED_THRESHOLD  # inverted: rotation swaps eye width/height
+                    eyes_closed = ear < EAR_CLOSED_THRESHOLD
                     print(f"[sleep] EAR={ear:.3f} (L={left_ear:.3f} R={right_ear:.3f}) closed={eyes_closed} state={baby_state}")
 
                     # Log every 10 frames so we can see EAR values
