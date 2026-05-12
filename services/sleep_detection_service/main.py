@@ -26,6 +26,12 @@ YUNET_PATH    = str(MODELS_DIR / "face_detection_yunet_2023mar.onnx")
 LANDMARK_PATH = str(MODELS_DIR / "face_landmark.tflite")
 
 POLL_INTERVAL_S          = 0.5
+
+ROTATIONS = {
+    90:  cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
 EAR_CLOSED_THRESHOLD     = 0.21
 CLOSED_SECONDS_THRESHOLD = 3.0
 OPEN_CONFIRM_SECONDS     = 0.5
@@ -151,7 +157,9 @@ def run_landmarker(interp, in_d, out_d, lm_idx, crop_bgr):
 
 def main():
     ai_cfg     = load_yaml("config/ai.yaml")["ai"]
+    audio_cfg  = load_yaml("config/audio.yaml").get("audio", {})
     camera_url = ai_cfg.get("camera_url", "http://localhost:8001/snapshot")
+    rotation   = int(audio_cfg.get("frame_rotation", 0))
 
     print(f"[sleep] starting — camera: {camera_url}")
 
@@ -173,6 +181,10 @@ def main():
                 continue
 
             frame_count += 1
+
+            if rotation in ROTATIONS:
+                frame = cv2.rotate(frame, ROTATIONS[rotation])
+
             h, w = frame.shape[:2]
 
             # ── Face detection ────────────────────────────────────────────
