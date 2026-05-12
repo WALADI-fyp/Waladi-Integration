@@ -89,6 +89,20 @@ def main():
         ),
     )
 
+    # ── Load rotation config (same as sleep service) ──────────────────────────
+    try:
+        import yaml as _yaml
+        _audio_cfg = _yaml.safe_load(open("config/audio.yaml"))
+        _frame_rotation = int(_audio_cfg.get("audio", {}).get("frame_rotation", 0))
+    except Exception:
+        _frame_rotation = 0
+    _cv2_rotations = {
+        90:  cv2.ROTATE_90_CLOCKWISE,
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+    }
+    print(f"[ai_pose] frame_rotation={_frame_rotation}°")
+
     # ── Load YuNet face detector for multi-stage risk assessment ─────────────
     _yunet_path = str(
         Path(__file__).resolve().parent.parent /
@@ -135,10 +149,20 @@ def main():
         if _yunet is None or frame is None:
             return result
 
+        # Apply same rotation as sleep service so face is upright for YuNet
+        if _frame_rotation in _cv2_rotations:
+            frame = cv2.rotate(frame, _cv2_rotations[_frame_rotation])
+
         h, w = frame.shape[:2]
+        print(f"[ai_pose_debug] rotation={_frame_rotation} frame_after={w}x{h}")
         # Always resize to 640px wide so YuNet works regardless of source resolution
         scale = 640 / w
         small = cv2.resize(frame, (640, int(h * scale)))
+        # Save the frame the model actually sees — debug viewer picks this up
+        try:
+            cv2.imwrite("/tmp/waladi_pose_frame.jpg", small)
+        except Exception:
+            pass
         sh, sw = small.shape[:2]
         _yunet.setInputSize((sw, sh))
         _, faces = _yunet.detect(small)

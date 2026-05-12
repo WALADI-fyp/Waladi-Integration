@@ -1,19 +1,19 @@
 """
 Waladi Debug Viewer
 ───────────────────
+Shows two panels side by side:
+  LEFT  — camera snapshot with face/eye detection overlaid
+  RIGHT — the exact frame ai_pose_service is analyzing
+
 Usage:
     python3 debug_viewer.py              # no rotation
-    python3 debug_viewer.py --rotate 90  # rotate 90° CW
+    python3 debug_viewer.py --rotate 90
     python3 debug_viewer.py --rotate 180
     python3 debug_viewer.py --rotate 270
-    python3 debug_viewer.py --rotate 90 --save   # save to config/audio.yaml and exit
-
-Try 90, 180, 270 until the baby face looks upright in the window.
-Then run with --save to persist it.
+    python3 debug_viewer.py --rotate 90 --save   # save rotation and exit
 """
 
 import argparse
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -26,6 +26,7 @@ CAMERA_URL    = "http://localhost:8001/snapshot"
 YUNET_PATH    = "services/sleep_detection_service/models/face_detection_yunet_2023mar.onnx"
 LANDMARK_PATH = "services/sleep_detection_service/models/face_landmark.tflite"
 AUDIO_CFG     = "config/audio.yaml"
+POSE_FRAME    = "/tmp/waladi_pose_frame.jpg"
 
 EAR_CLOSED_THRESHOLD  = 0.30
 LEFT_EYE_IDX          = [33,  160, 158, 133, 153, 144]
@@ -99,9 +100,9 @@ def eye_aspect_ratio(pts):
     return (v1 + v2) / (2.0 * h) if h > 1e-6 else 0.0
 
 
-def fetch_frame():
+def fetch_frame(url):
     try:
-        with urllib.request.urlopen(CAMERA_URL, timeout=3) as resp:
+        with urllib.request.urlopen(url, timeout=3) as resp:
             data = resp.read()
         arr   = np.frombuffer(data, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -115,15 +116,86 @@ def fetch_frame():
         return None
 
 
+def load_pose_frame():
+    """Load the frame ai_pose_service is actually analyzing."""
+    try:
+        frame = cv2.imread(POSE_FRAME)
+        return frame
+    except Exception:
+        return None
+
+
 def rotate_frame(frame, angle):
     if angle in ROTATIONS:
         return cv2.rotate(frame, ROTATIONS[angle])
     return frame
 
 
-def put_text(img, text, pos, color=(255, 255, 255), scale=0.6, thickness=2):
+def put_text(img, text, pos, color=(255, 255, 255), scale=0.55, thickness=1):
     cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0,0,0), thickness+2)
     cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thickness)
+
+
+def analyse_frame(yunet, interp, in_d, out_d, lm_idx, frame):
+    """Run face detection + EAR on a frame. Returns (vis, face_found, eyes_visible, ear)."""
+    vis = frame.copy()
+    h, w = vis.shape[:2]
+    face_found = False
+    eyes_visible = 0
+    ear = None
+
+    yunet.setInputSize((w, h))
+    _, faces = yunet.detect(frame)
+
+    if faces is not None and len(faces) > 0:
+        face_found = True
+        f = faces[0]
+        fx, fy, fw_, fh_ = int(f[0]), int(f[1]), int(f[2]), int(f[3])
+        cv2.rectangle(vis, (fx, fy), (fx+fw_, fy+fh_), (0, 255, 0), 2)
+
+        re_x, re_y = int(f[4]), int(f[5])
+        le_x, le_y = int(f[6]), int(f[7])
+        re_vis = re_x > 1 and re_y > 1
+        le_vis = le_x > 1 and le_y > 1
+        eyes_visible = int(re_vis) + int(le_vis)
+
+        if re_vis:
+            cv2.circle(vis, (re_x, re_y), 6, (0, 255, 255), -1)
+            put_text(vis, "RE", (re_x+7, re_y-5), (0,255,255), 0.4, 1)
+        if le_vis:
+            cv2.circle(vis, (le_x, le_y), 6, (255, 255, 0), -1)
+            put_text(vis, "LE", (le_x+7, le_y-5), (255,255,0), 0.4, 1)
+
+        pad  = int(LANDMARK_FACE_PADDING * min(fw_, fh_))
+        x1   = max(0, fx - pad)
+        y1   = max(0, fy - pad)
+        x2   = min(w, fx + fw_ + pad)
+        y2   = min(h, fy + fh_ + pad)
+        crop = frame[y1:y2, x1:x2]
+        lm   = run_landmarker(interp, in_d, out_d, lm_idx, crop)
+
+        if lm is not None:
+            lm[:, 0] += x1
+            lm[:, 1] += y1
+            for idx in LEFT_EYE_IDX + RIGHT_EYE_IDX:
+                cv2.circle(vis, (int(lm[idx,0]), int(lm[idx,1])), 2, (0,0,255), -1)
+            ear = (eye_aspect_ratio(lm[LEFT_EYE_IDX]) +
+                   eye_aspect_ratio(lm[RIGHT_EYE_IDX])) / 2.0
+
+    return vis, face_found, eyes_visible, ear
+
+
+def add_status_bar(vis, label, face_found, eyes_visible, ear, extra=""):
+    h, w = vis.shape[:2]
+    cv2.rectangle(vis, (0, h-85), (w, h), (0,0,0), -1)
+    put_text(vis, label, (8, h-65), (100,200,255), 0.6, 2)
+    ear_str = f"{ear:.3f}" if ear is not None else "N/A"
+    closed  = ear is not None and ear < EAR_CLOSED_THRESHOLD
+    put_text(vis, f"EAR: {ear_str} ({'CLOSED' if closed else 'open'})",
+             (8, h-42), (255,255,255), 0.5, 1)
+    put_text(vis, f"Face: {'YES' if face_found else 'NO'}  {eyes_visible}/2 eyes  {extra}",
+             (8, h-18), (200,200,200), 0.5, 1)
+    return vis
 
 
 def save_rotation(angle):
@@ -137,105 +209,74 @@ def save_rotation(angle):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rotate", type=int, default=0,
-                        choices=[0, 90, 180, 270],
-                        help="Rotate frame: 0, 90, 180, or 270 degrees CW")
-    parser.add_argument("--save", action="store_true",
-                        help="Save rotation to config/audio.yaml and exit")
+    parser.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270])
+    parser.add_argument("--save", action="store_true")
     args = parser.parse_args()
 
     if args.save:
         save_rotation(args.rotate)
-        print("[viewer] Rotation saved. Restart driver to apply.")
+        print("[viewer] Saved. Restart driver to apply.")
         return
 
-    print(f"[viewer] Starting with rotation={args.rotate}°")
-    print(f"[viewer] Try: python3 debug_viewer.py --rotate 90")
-    print(f"[viewer] Try: python3 debug_viewer.py --rotate 180")
-    print(f"[viewer] Try: python3 debug_viewer.py --rotate 270")
-    print(f"[viewer] Once correct: python3 debug_viewer.py --rotate {args.rotate} --save")
-    print(f"[viewer] Press Ctrl+C to stop")
+    print(f"[viewer] rotation={args.rotate}°  |  Ctrl+C to stop")
+    print(f"[viewer] LEFT panel = camera snapshot with your rotation")
+    print(f"[viewer] RIGHT panel = exact frame ai_pose is analyzing")
 
     yunet = load_yunet()
     interp, in_d, out_d, lm_idx = load_landmarker()
 
+    PANEL_W = 500
+    PANEL_H = 400
+    GAP     = 10
+    WIN_W   = PANEL_W * 2 + GAP * 3
+    WIN_H   = PANEL_H + 10
+
     cv2.namedWindow("Waladi Debug Viewer", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Waladi Debug Viewer", 640, 500)
+    cv2.resizeWindow("Waladi Debug Viewer", WIN_W, WIN_H)
+
+    blank = np.zeros((PANEL_H, PANEL_W, 3), dtype=np.uint8)
 
     while True:
-        raw = fetch_frame()
-        if raw is None:
-            time.sleep(0.5)
-            continue
+        canvas = np.full((WIN_H, WIN_W, 3), 30, dtype=np.uint8)
 
-        frame = rotate_frame(raw, args.rotate)
-        vis   = frame.copy()
-        h, w  = vis.shape[:2]
+        # ── LEFT: camera snapshot with rotation ───────────────────────────────
+        raw = fetch_frame(CAMERA_URL)
+        if raw is not None:
+            rotated = rotate_frame(raw, args.rotate)
+            vis_l, ff_l, ev_l, ear_l = analyse_frame(
+                yunet, interp, in_d, out_d, lm_idx, rotated)
+            vis_l = add_status_bar(vis_l, f"SNAPSHOT rot={args.rotate}deg", ff_l, ev_l, ear_l)
+            vis_l = cv2.resize(vis_l, (PANEL_W, PANEL_H))
+        else:
+            vis_l = blank.copy()
+            put_text(vis_l, "Waiting for camera...", (20, PANEL_H//2), (0,200,255))
 
-        yunet.setInputSize((w, h))
-        _, faces = yunet.detect(frame)
+        canvas[5:5+PANEL_H, GAP:GAP+PANEL_W] = vis_l
 
-        face_found   = False
-        eyes_visible = 0
-        ear          = None
+        # ── RIGHT: frame ai_pose is actually analyzing ─────────────────────────
+        pose_frame = load_pose_frame()
+        if pose_frame is not None:
+            vis_r, ff_r, ev_r, ear_r = analyse_frame(
+                yunet, interp, in_d, out_d, lm_idx, pose_frame)
+            age = time.time() - Path(POSE_FRAME).stat().st_mtime
+            vis_r = add_status_bar(vis_r, "AI POSE FRAME", ff_r, ev_r, ear_r,
+                                   extra=f"({age:.1f}s ago)")
+            vis_r = cv2.resize(vis_r, (PANEL_W, PANEL_H))
+        else:
+            vis_r = blank.copy()
+            put_text(vis_r, "No pose frame yet", (20, PANEL_H//2), (100,100,255))
+            put_text(vis_r, "(driver.py must be running)", (20, PANEL_H//2+30),
+                     (150,150,150), 0.45)
 
-        if faces is not None and len(faces) > 0:
-            face_found = True
-            f = faces[0]
-            fx, fy, fw_, fh_ = int(f[0]), int(f[1]), int(f[2]), int(f[3])
-            cv2.rectangle(vis, (fx, fy), (fx+fw_, fy+fh_), (0, 255, 0), 2)
+        canvas[5:5+PANEL_H, GAP*2+PANEL_W:GAP*2+PANEL_W*2] = vis_r
 
-            re_x, re_y = int(f[4]), int(f[5])
-            le_x, le_y = int(f[6]), int(f[7])
-            re_vis = re_x > 1 and re_y > 1
-            le_vis = le_x > 1 and le_y > 1
-            eyes_visible = int(re_vis) + int(le_vis)
+        # Labels
+        put_text(canvas, "LEFT: Your view (rotated snapshot)",
+                 (GAP, 18), (100,200,255), 0.5, 1)
+        put_text(canvas, "RIGHT: What ai_pose model sees",
+                 (GAP*2+PANEL_W, 18), (100,255,100), 0.5, 1)
 
-            if re_vis:
-                cv2.circle(vis, (re_x, re_y), 6, (0, 255, 255), -1)
-                put_text(vis, "RE", (re_x+7, re_y-5), (0,255,255), 0.4, 1)
-            if le_vis:
-                cv2.circle(vis, (le_x, le_y), 6, (255, 255, 0), -1)
-                put_text(vis, "LE", (le_x+7, le_y-5), (255,255,0), 0.4, 1)
-
-            pad  = int(LANDMARK_FACE_PADDING * min(fw_, fh_))
-            x1   = max(0, fx - pad)
-            y1   = max(0, fy - pad)
-            x2   = min(w, fx + fw_ + pad)
-            y2   = min(h, fy + fh_ + pad)
-            crop = frame[y1:y2, x1:x2]
-            lm   = run_landmarker(interp, in_d, out_d, lm_idx, crop)
-
-            if lm is not None:
-                lm_full = lm.copy()
-                lm_full[:, 0] += x1
-                lm_full[:, 1] += y1
-                for idx in LEFT_EYE_IDX + RIGHT_EYE_IDX:
-                    px, py = int(lm_full[idx, 0]), int(lm_full[idx, 1])
-                    cv2.circle(vis, (px, py), 2, (0, 0, 255), -1)
-                left_ear  = eye_aspect_ratio(lm_full[LEFT_EYE_IDX])
-                right_ear = eye_aspect_ratio(lm_full[RIGHT_EYE_IDX])
-                ear       = (left_ear + right_ear) / 2.0
-
-        # Status bar
-        bar_h = 105
-        cv2.rectangle(vis, (0, h - bar_h), (w, h), (0, 0, 0), -1)
-
-        is_risky   = eyes_visible == 0
-        risk_color = (0, 0, 255) if is_risky else (0, 255, 0)
-        ear_str    = f"{ear:.3f}" if ear is not None else "N/A"
-        closed     = ear is not None and ear < EAR_CLOSED_THRESHOLD
-
-        put_text(vis, f"Risk: {'RISKY' if is_risky else 'SAFE'}",
-                 (10, h - bar_h + 28), risk_color, 0.8, 2)
-        put_text(vis, f"EAR: {ear_str}  ({'CLOSED' if closed else 'open'})  threshold < {EAR_CLOSED_THRESHOLD}",
-                 (10, h - bar_h + 56), (255, 255, 255), 0.55, 1)
-        put_text(vis, f"Face: {'YES' if face_found else 'NO'}  {eyes_visible}/2 eyes visible",
-                 (10, h - bar_h + 80), (200, 200, 200), 0.55, 1)
-        put_text(vis, f"Rotation: {args.rotate}deg  |  run with --rotate 90/180/270 to change",
-                 (10, h - bar_h + 100), (100, 200, 255), 0.42, 1)
-
-        cv2.imshow("Waladi Debug Viewer", vis)
+        cv2.imshow("Waladi Debug Viewer", canvas)
         if cv2.waitKey(500) & 0xFF == ord('q'):
             break
 
