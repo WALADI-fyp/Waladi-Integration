@@ -27,7 +27,7 @@ YUNET_PATH    = "services/sleep_detection_service/models/face_detection_yunet_20
 LANDMARK_PATH = "services/sleep_detection_service/models/face_landmark.tflite"
 AUDIO_CFG     = "config/audio.yaml"
 
-EAR_CLOSED_THRESHOLD  = 0.21
+EAR_CLOSED_THRESHOLD  = 0.30
 LEFT_EYE_IDX          = [33,  160, 158, 133, 153, 144]
 RIGHT_EYE_IDX         = [362, 385, 387, 263, 373, 380]
 LANDMARK_INPUT_SIZE   = 192
