@@ -1,14 +1,18 @@
 audio:
-  card_device: "hw:2,0"
-  src_rate: 48000
-  src_format: "S32_LE"
-  src_channels: 2
-  out_rate: 16000
-  gain_db: 15
-  model_path: "/home/pi/waladi_models/yamnet/yamnet.tflite"
-  cry_class_ids: [20, 21, 23]
-  cry_prob_threshold: 0.20
+  card_device: hw:2,0
+  cry_class_ids:
+  - 20
+  - 21
+  - 23
   cry_confirm_seconds: 0.5
-  silence_confirm_secs: 8.0
-  model_samples: 15600
+  cry_prob_threshold: 0.2
+  frame_rotation: 90
+  gain_db: 15
   hop_samples: 8000
+  model_path: /home/pi/waladi_models/yamnet/yamnet.tflite
+  model_samples: 15600
+  out_rate: 16000
+  silence_confirm_secs: 8.0
+  src_channels: 2
+  src_format: S32_LE
+  src_rate: 48000
