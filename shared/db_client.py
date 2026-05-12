@@ -213,15 +213,17 @@ class DbClient:
 
     def insert_risky_posture_alert(self, *, user_id: str, device_id: str,
                                     detected_at_ms: int, nose_confidence: float,
-                                    face_found: bool, eyes_visible: int):
+                                    face_found: bool, eyes_visible: int) -> int:
+        import uuid as _uuid
         self._ensure_connected()
         with self._conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO risky_posture_alerts
-                    (user_id, device_id, detected_at, nose_confidence, face_found, eyes_visible)
-                VALUES (%s, %s, to_timestamp(%s / 1000.0), %s, %s, %s)
+                    (alert_id, user_id, device_id, detected_at,
+                     nose_confidence, face_found, eyes_visible)
+                VALUES (%s, %s, %s, to_timestamp(%s / 1000.0), %s, %s, %s)
                 RETURNING id
-            """, (user_id, device_id, detected_at_ms,
+            """, (str(_uuid.uuid4()), user_id, device_id, detected_at_ms,
                   nose_confidence, face_found, eyes_visible))
             return cur.fetchone()[0]
 
@@ -231,14 +233,15 @@ class DbClient:
 
     def insert_sleep_alert_start(self, *, user_id: str, device_id: str,
                                   started_at_ms: int, ear_start: float) -> int:
+        import uuid as _uuid
         self._ensure_connected()
         with self._conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO sleep_alerts
-                    (user_id, device_id, started_at, ear_start)
-                VALUES (%s, %s, to_timestamp(%s / 1000.0), %s)
+                    (alert_id, user_id, device_id, started_at, ear_start)
+                VALUES (%s, %s, %s, to_timestamp(%s / 1000.0), %s)
                 RETURNING id
-            """, (user_id, device_id, started_at_ms, ear_start))
+            """, (str(_uuid.uuid4()), user_id, device_id, started_at_ms, ear_start))
             return cur.fetchone()[0]
 
     def update_sleep_alert_end(self, *, alert_id: int, ended_at_ms: int, ear_end: float):
