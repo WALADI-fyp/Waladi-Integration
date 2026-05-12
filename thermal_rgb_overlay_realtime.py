@@ -81,6 +81,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--crop-right", type=float, default=0.0, help="Crop thermal overlay fraction from right, 0..0.45")
     p.add_argument("--crop-top", type=float, default=0.0, help="Crop thermal overlay fraction from top, 0..0.45")
     p.add_argument("--crop-bottom", type=float, default=0.0, help="Crop thermal overlay fraction from bottom, 0..0.45")
+    p.add_argument("--thermal-shift-x", type=int, default=0, help="Shift thermal overlay horizontally in pixels; positive moves right")
+    p.add_argument("--thermal-shift-y", type=int, default=0, help="Shift thermal overlay vertically in pixels; positive moves down")
+    p.add_argument("--thermal-shift-x-frac", type=float, default=0.0, help="Shift thermal overlay horizontally as fraction of frame width; positive moves right")
+    p.add_argument("--thermal-shift-y-frac", type=float, default=0.0, help="Shift thermal overlay vertically as fraction of frame height; positive moves down")
 
     # Visualization
     p.add_argument("--alpha", type=float, default=0.50, help="Thermal overlay opacity, 0..1")
@@ -333,6 +337,30 @@ def crop_fraction(data: np.ndarray, left: float, right: float, top: float, botto
     return data[y1:y2, x1:x2]
 
 
+def shift_image(img: np.ndarray, shift_x: int, shift_y: int) -> np.ndarray:
+    """
+    Shift an image without wrapping.
+
+    Positive shift_x moves right.
+    Negative shift_x moves left.
+    Positive shift_y moves down.
+    Negative shift_y moves up.
+
+    Empty areas are filled with black. This is important for thermal overlays
+    because we do not want heat from one side wrapping to the other side.
+    """
+    h, w = img.shape[:2]
+    matrix = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    return cv2.warpAffine(
+        img,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0),
+    )
+
+
 def colormap_id(name: str) -> int:
     return {
         "inferno": cv2.COLORMAP_INFERNO,
@@ -443,11 +471,24 @@ def make_overlay(rgb: np.ndarray, thermal_raw: np.ndarray, args: argparse.Namesp
     thermal = crop_fraction(thermal, args.crop_left, args.crop_right, args.crop_top, args.crop_bottom)
 
     heatmap, _, _ = thermal_to_heatmap(thermal, args, (rgb.shape[1], rgb.shape[0]))
+
+    shift_x = int(args.thermal_shift_x + round(args.thermal_shift_x_frac * rgb.shape[1]))
+    shift_y = int(args.thermal_shift_y + round(args.thermal_shift_y_frac * rgb.shape[0]))
+    if shift_x or shift_y:
+        heatmap = shift_image(heatmap, shift_x, shift_y)
+
     alpha = max(0.0, min(1.0, args.alpha))
     overlay = cv2.addWeighted(rgb, 1.0 - alpha, heatmap, alpha, 0.0)
 
     if args.draw_hotspot:
-        draw_hotspot_marker(overlay, thermal)
+        # Hotspot marker is shifted using the same pixel/percentage shift as the heatmap.
+        h, w = overlay.shape[:2]
+        max_r, max_c = np.unravel_index(int(np.argmax(thermal)), thermal.shape)
+        x = int((max_c + 0.5) / thermal.shape[1] * w) + shift_x
+        y = int((max_r + 0.5) / thermal.shape[0] * h) + shift_y
+        if 0 <= x < w and 0 <= y < h:
+            cv2.drawMarker(overlay, (x, y), (255, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=28, thickness=2)
+            cv2.circle(overlay, (x, y), 10, (0, 0, 0), 2)
 
     draw_temperature_badge(overlay, float(np.max(thermal)))
 
