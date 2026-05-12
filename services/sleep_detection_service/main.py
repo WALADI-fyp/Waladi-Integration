@@ -207,6 +207,7 @@ def main():
                     right_ear = eye_aspect_ratio(lm_full[RIGHT_EYE_IDX])
                     ear       = (left_ear + right_ear) / 2.0
                     eyes_closed = ear < EAR_CLOSED_THRESHOLD
+                    print(f"[sleep] EAR={ear:.3f} (L={left_ear:.3f} R={right_ear:.3f}) closed={eyes_closed} state={baby_state}")
 
                     # Log every 10 frames so we can see EAR values
                     if frame_count % 10 == 0:
@@ -217,11 +218,9 @@ def main():
                             f"state={baby_state}"
                         )
                 else:
-                    if frame_count % 20 == 0:
-                        print(f"[sleep] face detected but landmarks returned None (crop={crop.shape})")
+                    print(f"[sleep] face detected but landmarks=None  state={baby_state}")
             else:
-                if frame_count % 20 == 0:
-                    print(f"[sleep] no face detected in frame")
+                print(f"[sleep] no face detected  state={baby_state}")
 
             # ── State machine ─────────────────────────────────────────────
             t = time.time()
@@ -242,7 +241,8 @@ def main():
                     if (t - open_confirm_start) >= OPEN_CONFIRM_SECONDS:
                         baby_state = "awake"
                         open_confirm_start = None
-                        print(f"[sleep] Baby woke up  (EAR={ear:.3f if ear else 'N/A'})")
+                        ear_str = f"{ear:.3f}" if ear is not None else "N/A"
+                        print(f"[sleep] Baby woke up  (EAR={ear_str})")
 
         except Exception as e:
             print(f"[sleep] ERROR: {e}")
