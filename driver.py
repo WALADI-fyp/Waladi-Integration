@@ -14,6 +14,7 @@ SERVICES = [
     "services.ai_pose_service.main",
     "services.cry_detection_service.main",
     "services.temperature_alert_service.main",
+    "services.vital_alert_service.main",
     "services.sleep_detection_service.main",
 ]
 

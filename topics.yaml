@@ -8,3 +8,4 @@ broker:
 client:
   keepalive: 30
   device_id: "waladi-dbb2e0f4"
+  vital_alert: "waladi/alerts/vitals"

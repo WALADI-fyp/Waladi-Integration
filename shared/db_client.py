@@ -380,3 +380,123 @@ class DbClient:
             row = cur.fetchone()
             return row[0]
 
+
+    # ──────────────────────────────────────────────
+    #  Vital alerts: heart rate and breath rate
+    # ──────────────────────────────────────────────
+
+    def init_vital_alerts_table(self):
+        """
+        Creates vital_alerts for event-based heart-rate and breath-rate alerts.
+        Safe to call on every startup.
+        """
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS vital_alerts (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     TEXT NOT NULL,
+                    device_id   TEXT NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    vital_type  TEXT NOT NULL,
+                    value       DOUBLE PRECISION NOT NULL,
+                    severity    TEXT NOT NULL,
+                    message     TEXT,
+                    CONSTRAINT vital_alerts_type_check
+                        CHECK (vital_type IN ('heart_rate', 'breath_rate')),
+                    CONSTRAINT vital_alerts_severity_check
+                        CHECK (severity IN ('critical_low', 'critical_high'))
+                )
+            """)
+
+            # If a partially-created table exists, make sure all columns are present.
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD COLUMN IF NOT EXISTS vital_type TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD COLUMN IF NOT EXISTS value DOUBLE PRECISION
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD COLUMN IF NOT EXISTS severity TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD COLUMN IF NOT EXISTS message TEXT
+            """)
+
+            cur.execute("""
+                UPDATE vital_alerts
+                SET created_at = COALESCE(created_at, NOW())
+                WHERE created_at IS NULL
+            """)
+
+            # Reinstall CHECK constraints so repeated startup remains safe.
+            cur.execute("""
+                DO $$
+                DECLARE constraint_name TEXT;
+                BEGIN
+                    FOR constraint_name IN
+                        SELECT conname
+                        FROM pg_constraint
+                        WHERE conrelid = 'vital_alerts'::regclass
+                          AND contype = 'c'
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE vital_alerts DROP CONSTRAINT IF EXISTS %I',
+                            constraint_name
+                        );
+                    END LOOP;
+                END $$
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD CONSTRAINT vital_alerts_type_check
+                CHECK (vital_type IN ('heart_rate', 'breath_rate'))
+            """)
+            cur.execute("""
+                ALTER TABLE vital_alerts
+                ADD CONSTRAINT vital_alerts_severity_check
+                CHECK (severity IN ('critical_low', 'critical_high'))
+            """)
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_vital_alerts_user_created_at
+                ON vital_alerts (user_id, created_at DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_vital_alerts_device_created_at
+                ON vital_alerts (device_id, created_at DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_vital_alerts_type_created_at
+                ON vital_alerts (vital_type, created_at DESC)
+            """)
+
+        print("[DB] vital_alerts table ready")
+
+    def insert_vital_alert(self, *, user_id: str, device_id: str,
+                           created_at_ms: int, vital_type: str,
+                           value: float, severity: str,
+                           message: str) -> int:
+        """Insert one event-based vital alert and return its row id."""
+        self._ensure_connected()
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO vital_alerts
+                    (user_id, device_id, created_at, vital_type, value, severity, message)
+                VALUES (%s, %s, to_timestamp(%s / 1000.0), %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (user_id, device_id, created_at_ms, vital_type, value, severity, message),
+            )
+            row = cur.fetchone()
+            return row[0]
+

@@ -8,3 +8,4 @@ topics:
   cry_alert: "waladi/alerts/cry"
   sleep_state: "waladi/ai/sleep"
   temperature_alert: "waladi/alerts/temperature"
+  vital_alert: "waladi/alerts/vitals"
