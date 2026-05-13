@@ -37,7 +37,7 @@ ROTATIONS = {
     180: cv2.ROTATE_180,
     270: cv2.ROTATE_90_COUNTERCLOCKWISE,
 }
-EAR_CLOSED_THRESHOLD     = 0.175
+EAR_CLOSED_THRESHOLD     = 0.245
 CLOSED_SECONDS_THRESHOLD = 3.0
 OPEN_CONFIRM_SECONDS     = 0.5
 PATIENCE_FRAMES          = 3    # consecutive frames needed before acting
@@ -266,7 +266,7 @@ def main():
                     left_ear  = eye_aspect_ratio(lm[LEFT_EYE_IDX])
                     right_ear = eye_aspect_ratio(lm[RIGHT_EYE_IDX])
                     ear       = (left_ear + right_ear) / 2.0
-                    eyes_closed = ear < EAR_CLOSED_THRESHOLD
+                    eyes_closed = ear > EAR_CLOSED_THRESHOLD
                     print(f"[sleep] EAR={ear:.3f} (L={left_ear:.3f} R={right_ear:.3f}) closed={eyes_closed} state={baby_state}")
 
                     # Log every 10 frames so we can see EAR values

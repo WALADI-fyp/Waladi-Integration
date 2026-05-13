@@ -26,7 +26,7 @@ adafruit_mlx90640.MLX90640._ExtractDeviatingPixels = _patched_extract
 class MLX90640Driver:
     def __init__(
         self,
-        refresh_rate=adafruit_mlx90640.RefreshRate.REFRESH_4_HZ,
+        refresh_rate=adafruit_mlx90640.RefreshRate.REFRESH_2_HZ,
         enable_visualization: bool = False,
     ):
         self.enable_visualization = enable_visualization
