@@ -9,3 +9,4 @@ topics:
   sleep_state: "waladi/ai/sleep"
   temperature_alert: "waladi/alerts/temperature"
   vital_alert: "waladi/alerts/vitals"
+  breath_rate_demo: "waladi/demo/breath_rate"

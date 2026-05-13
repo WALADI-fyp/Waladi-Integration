@@ -82,7 +82,7 @@ def make_demo_mqtt_client() -> tuple[MqttClient, str, str]:
     broker_cfg = mqtt_cfg["broker"]
     client_cfg = mqtt_cfg["client"]
     client = MqttClient(
-        client_id=f"driver_demo_vitals_{device_id}",
+        client_id=f"driver_demo_breath_{device_id}",
         host=broker_cfg["host"],
         port=broker_cfg["port"],
         keepalive=client_cfg.get("keepalive", 60),
@@ -91,15 +91,20 @@ def make_demo_mqtt_client() -> tuple[MqttClient, str, str]:
         tls=broker_cfg.get("tls", False),
     )
     client.connect()
-    return client, topics["vital_signs"], device_id
+
+    # Use a dedicated demo topic so the fake breath-rate countdown does not
+    # overwrite the real mmWave heart_rate_bpm in fusion/db services.
+    demo_topic = topics.get("breath_rate_demo", "waladi/demo/breath_rate")
+    return client, demo_topic, device_id
 
 
 def breath_rate_demo_worker():
     """
-    Publishes fake-but-non-mock vitals to the normal mmWave topic.
+    Publishes fake breath-rate-only readings to a dedicated demo topic.
 
     Starts breath rate at 21 and decreases by 1 every second down to 8.
-    heart_rate_bpm stays normal so only breath-rate alerts are tested.
+    It intentionally does NOT publish heart_rate_bpm, so the real heartbeat
+    values from the mmWave service are not touched or overwritten.
     """
     client = None
     try:
@@ -112,7 +117,6 @@ def breath_rate_demo_worker():
 
             data = {
                 "breathing_rate_bpm": float(breath_rate),
-                "heart_rate_bpm": 120.0,
                 "mock": False,
                 "fake_demo": True,
                 "device_id": device_id,
@@ -123,7 +127,7 @@ def breath_rate_demo_worker():
                 qos=1,
                 retain=False,
             )
-            print(f"[driver-demo] published fake breathing_rate_bpm={breath_rate}, heart_rate_bpm=120")
+            print(f"[driver-demo] published fake breathing_rate_bpm={breath_rate}; heart_rate_bpm unchanged")
             time.sleep(1.0)
 
         print("[driver-demo] breath-rate demo finished")

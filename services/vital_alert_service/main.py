@@ -140,6 +140,7 @@ def main():
 
     device_id = get_device_id()
     vitals_topic = topics["vital_signs"]
+    breath_demo_topic = topics.get("breath_rate_demo", "waladi/demo/breath_rate")
     alert_topic = topics["vital_alert"]
 
     db = DbClient(
@@ -269,7 +270,11 @@ def main():
 
     mqtt.connect()
     mqtt.subscribe(vitals_topic, on_vitals_message, qos=1)
-    print(f"[vital] service ready — listening to '{vitals_topic}', publishing to '{alert_topic}'")
+    mqtt.subscribe(breath_demo_topic, on_vitals_message, qos=1)
+    print(
+        f"[vital] service ready — listening to '{vitals_topic}' and '{breath_demo_topic}', "
+        f"publishing to '{alert_topic}'"
+    )
 
     try:
         while True:
