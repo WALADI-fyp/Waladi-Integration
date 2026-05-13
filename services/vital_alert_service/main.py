@@ -28,6 +28,20 @@ from shared.mqtt_client import MqttClient
 HEART_RATE = "heart_rate"
 BREATH_RATE = "breath_rate"
 
+# Critical alert thresholds. Normal target ranges are intentionally not used for
+# alerting because mmWave vitals can be noisy and babies vary during sleep.
+HEART_RATE_LOW_BPM = 80.0
+HEART_RATE_HIGH_BPM = 200.0
+BREATH_RATE_LOW_BPM = 20.0
+BREATH_RATE_HIGH_BPM = 60.0
+
+# Stability filter to avoid one bad mmWave sample creating a notification.
+# Heart must be critical twice in a row; breathing must be critical three times.
+REQUIRED_CRITICAL_READINGS = {
+    HEART_RATE: 2,
+    BREATH_RATE: 3,
+}
+
 
 def load_yaml(path: str) -> dict:
     with open(path, "r") as f:
@@ -46,18 +60,18 @@ def safe_float(value, field_name: str) -> Optional[float]:
 
 def classify_heart_rate(heart_rate_bpm: float) -> Optional[str]:
     """Return alert severity, or None when heart rate is not critical."""
-    if heart_rate_bpm < 80.0:
+    if heart_rate_bpm < HEART_RATE_LOW_BPM:
         return "critical_low"
-    if heart_rate_bpm > 200.0:
+    if heart_rate_bpm > HEART_RATE_HIGH_BPM:
         return "critical_high"
     return None
 
 
 def classify_breath_rate(breathing_rate_bpm: float) -> Optional[str]:
     """Return alert severity, or None when breath rate is not critical."""
-    if breathing_rate_bpm < 20.0:
+    if breathing_rate_bpm < BREATH_RATE_LOW_BPM:
         return "critical_low"
-    if breathing_rate_bpm > 60.0:
+    if breathing_rate_bpm > BREATH_RATE_HIGH_BPM:
         return "critical_high"
     return None
 
@@ -152,8 +166,9 @@ def main():
         tls=broker_cfg.get("tls", False),
     )
 
-    # Dedup is per device + vital_type.
+    # Dedup/stability is per device + vital_type.
     last_severity_by_key: dict[tuple[str, str], Optional[str]] = {}
+    pending_state_by_key: dict[tuple[str, str], tuple[Optional[str], int]] = {}
 
     def maybe_emit_alert(*, msg_device_id: str, vital_type: str, value: float, severity: Optional[str]):
         key = (msg_device_id, vital_type)
@@ -163,9 +178,26 @@ def main():
             if previous is not None:
                 print(f"[vital] {vital_type}={value:.1f} back to non-critical; reset for {msg_device_id}")
             last_severity_by_key[key] = None
+            pending_state_by_key[key] = (None, 0)
             return
 
         if severity == previous:
+            pending_state_by_key[key] = (severity, REQUIRED_CRITICAL_READINGS.get(vital_type, 1))
+            return
+
+        pending_severity, pending_count = pending_state_by_key.get(key, (None, 0))
+        if pending_severity == severity:
+            pending_count += 1
+        else:
+            pending_count = 1
+        pending_state_by_key[key] = (severity, pending_count)
+
+        required_count = REQUIRED_CRITICAL_READINGS.get(vital_type, 1)
+        if pending_count < required_count:
+            print(
+                f"[vital] {vital_type}={value:.1f} {severity} "
+                f"pending {pending_count}/{required_count} for {msg_device_id}"
+            )
             return
 
         ts = now_ms()
